@@ -704,6 +704,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs" {
   }
 }
 
+resource "aws_eks_addon" "cloudwatch_observability" {
+  cluster_name = aws_eks_cluster.main.name
+  addon_name   = "amazon-cloudwatch-observability"
+}
+
 # ===== IAM Role for Workstation EC2 Instances =====
 resource "aws_iam_role" "workstation_role" {
   name = "${var.project_name}-workstation-role"
