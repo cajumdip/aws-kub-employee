@@ -1,0 +1,81 @@
+# Role for backend application
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backend-api-role
+  namespace: innovatech-app
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+
+---
+# RoleBinding for backend service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backend-api-rolebinding
+  namespace: innovatech-app
+subjects:
+- kind: ServiceAccount
+  name: backend-api-sa
+  namespace: innovatech-app
+roleRef:
+  kind: Role
+  name: backend-api-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role for frontend application (minimal permissions)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: frontend-app-role
+  namespace: innovatech-app
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list"]
+
+---
+# Service Account for frontend
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frontend-app-sa
+  namespace: innovatech-app
+
+---
+# RoleBinding for frontend service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: frontend-app-rolebinding
+  namespace: innovatech-app
+subjects:
+- kind: ServiceAccount
+  name: frontend-app-sa
+  namespace: innovatech-app
+roleRef:
+  kind: Role
+  name: frontend-app-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRole for monitoring (read-only access to metrics)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: innovatech-metrics-reader
+rules:
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---

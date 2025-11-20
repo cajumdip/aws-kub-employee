@@ -1,0 +1,84 @@
+---
+# Service Account with IRSA for DynamoDB access
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend-api-sa
+  namespace: innovatech-app
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::143858013937:role/innovatech-backend-api-role
+---
+# Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-api
+  namespace: innovatech-app
+  labels:
+    app: backend-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend-api
+  template:
+    metadata:
+      labels:
+        app: backend-api
+    spec:
+      serviceAccountName: backend-api-sa
+      containers:
+      - name: backend-api
+        image: 143858013937.dkr.ecr.eu-central-1.amazonaws.com/innovatech-backend-api:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DYNAMODB_TABLE_NAME
+          value: innovatech-employees
+        - name: AWS_REGION
+          value: eu-central-1
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        # --- NEW SECURITY CONTEXT ---
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        # -----------------------------
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+# Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-api-service
+  namespace: innovatech-app
+spec:
+  selector:
+    app: backend-api
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+  type: ClusterIP

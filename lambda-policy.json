@@ -1,0 +1,87 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream", 
+                "logs:PutLogEvents"
+            ],
+            "Resource": "arn:aws:logs:*:*:*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:DescribeStream",
+                "dynamodb:GetRecords",
+                "dynamodb:GetShardIterator",
+                "dynamodb:ListStreams"
+            ],
+            "Resource": "arn:aws:dynamodb:eu-central-1:143858013937:table/innovatech-employees/stream/*"
+        },
+        {
+            "Effect": "Allow", 
+            "Action": [
+                "iam:CreateUser",
+                "iam:GetUser",
+                "iam:CreateAccessKey",
+                "iam:AddUserToGroup", 
+                "iam:TagUser",
+                "iam:CreateGroup",
+                "iam:AttachUserPolicy",
+                "iam:ListAccessKeys",
+                "iam:DeleteAccessKey",
+                "iam:RemoveUserFromGroup",
+                "iam:DetachUserPolicy", 
+                "iam:DeleteUser",
+                "iam:ListGroupsForUser"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "secretsmanager:CreateSecret",
+                "secretsmanager:TagResource"
+            ],
+            "Resource": "arn:aws:secretsmanager:eu-central-1:143858013937:secret:innovatech/employee/*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:PutObject",
+                "s3:PutObjectAcl", 
+                "s3:GetObject"
+            ],
+            "Resource": "arn:aws:s3:::innovatech-enrollment-scripts/*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:ListBucket"
+            ],
+            "Resource": "arn:aws:s3:::innovatech-enrollment-scripts"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:CreateNetworkInterface",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DeleteNetworkInterface"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ssm:CreateActivation",
+                "ssm:DeleteActivation",
+                "ssm:DescribeActivations",
+                "ssm:AddTagsToResource",
+                "iam:PassRole"
+            ],
+            "Resource": "*"
+        }
+    ]
+}

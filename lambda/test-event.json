@@ -1,0 +1,14 @@
+﻿{
+  "Records": [
+    {
+      "s3": {
+        "bucket": {
+          "name": "innovatech-enrollment-scripts"
+        },
+        "object": {
+          "key": "new-employee.csv"
+        }
+      }
+    }
+  ]
+}
