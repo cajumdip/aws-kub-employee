@@ -104,51 +104,70 @@ def handle_employee_creation(record):
             access_key = access_key_response['AccessKey']['AccessKeyId']
             secret_key = access_key_response['AccessKey']['SecretAccessKey']
         
-        # 2. Create EC2 Workstation
-        print(f"💻 Creating Windows workstation for {employee_name}...")
+        # 2. Create EC2 Workstation (IDEMPOTENCY CHECK ADDED)
+        print(f"💻 Checking for existing workstation for {employee_name}...")
         
-        user_data_script = generate_workstation_userdata(employee_name, employee_id, department)
-        
-        instance_response = ec2.run_instances(
-            ImageId=WORKSTATION_AMI,
-            InstanceType=WORKSTATION_INSTANCE_TYPE,
-            MinCount=1,
-            MaxCount=1,
-            SubnetId=WORKSTATION_SUBNET_ID,
-            SecurityGroupIds=[WORKSTATION_SG_ID],
-            IamInstanceProfile={'Name': WORKSTATION_PROFILE_NAME},
-            UserData=user_data_script,
-            TagSpecifications=[
-                {
-                    'ResourceType': 'instance',
-                    'Tags': [
-                        {'Key': 'Name', 'Value': f'{employee_name}-Workstation'},
-                        {'Key': 'EmployeeId', 'Value': employee_id},
-                        {'Key': 'EmployeeName', 'Value': employee_name},
-                        {'Key': 'Department', 'Value': department},
-                        {'Key': 'Role', 'Value': role},
-                        {'Key': 'ManagedBy', 'Value': 'Innovatech-Automation'},
-                        {'Key': 'Environment', 'Value': 'production'}
-                    ]
-                }
-            ],
-            BlockDeviceMappings=[
-                {
-                    'DeviceName': '/dev/sda1',
-                    'Ebs': {
-                        'VolumeSize': 100,
-                        'VolumeType': 'gp3',
-                        'Encrypted': True,
-                        'DeleteOnTermination': True
-                    }
-                }
+        # Search for existing instances with this EmployeeId tag
+        existing_instances = ec2.describe_instances(
+            Filters=[
+                {'Name': 'tag:EmployeeId', 'Values': [employee_id]},
+                {'Name': 'instance-state-name', 'Values': ['pending', 'running', 'stopping', 'stopped']}
             ]
         )
         
-        instance_id = instance_response['Instances'][0]['InstanceId']
-        private_ip = instance_response['Instances'][0].get('PrivateIpAddress', 'pending')
+        instance_id = None
+        private_ip = 'pending'
         
-        print(f"✅ Created EC2 instance: {instance_id}")
+        if existing_instances['Reservations']:
+            # RECOVER: Use the instance we already created on the previous attempt
+            instance = existing_instances['Reservations'][0]['Instances'][0]
+            instance_id = instance['InstanceId']
+            private_ip = instance.get('PrivateIpAddress', 'pending')
+            print(f"⚠️ Found existing instance {instance_id}, skipping creation to prevent duplicates")
+        else:
+            # CREATE: No instance found, create a new one
+            print(f"💻 No existing instance found. Creating Windows workstation...")
+            user_data_script = generate_workstation_userdata(employee_name, employee_id, department)
+            
+            instance_response = ec2.run_instances(
+                ImageId=WORKSTATION_AMI,
+                InstanceType=WORKSTATION_INSTANCE_TYPE,
+                MinCount=1,
+                MaxCount=1,
+                SubnetId=WORKSTATION_SUBNET_ID,
+                SecurityGroupIds=[WORKSTATION_SG_ID],
+                IamInstanceProfile={'Name': WORKSTATION_PROFILE_NAME},
+                UserData=user_data_script,
+                TagSpecifications=[
+                    {
+                        'ResourceType': 'instance',
+                        'Tags': [
+                            {'Key': 'Name', 'Value': f'{employee_name}-Workstation'},
+                            {'Key': 'EmployeeId', 'Value': employee_id},
+                            {'Key': 'EmployeeName', 'Value': employee_name},
+                            {'Key': 'Department', 'Value': department},
+                            {'Key': 'Role', 'Value': role},
+                            {'Key': 'ManagedBy', 'Value': 'Innovatech-Automation'},
+                            {'Key': 'Environment', 'Value': 'production'}
+                        ]
+                    }
+                ],
+                BlockDeviceMappings=[
+                    {
+                        'DeviceName': '/dev/sda1',
+                        'Ebs': {
+                            'VolumeSize': 100,
+                            'VolumeType': 'gp3',
+                            'Encrypted': True,
+                            'DeleteOnTermination': True
+                        }
+                    }
+                ]
+            )
+            
+            instance_id = instance_response['Instances'][0]['InstanceId']
+            private_ip = instance_response['Instances'][0].get('PrivateIpAddress', 'pending')
+            print(f"✅ Created EC2 instance: {instance_id}")
         
         # 3. Store workstation info in DynamoDB
         workstations_table.put_item(

@@ -814,7 +814,10 @@ resource "aws_iam_role_policy" "lambda_onboarding" {
         Action = [
           "iam:PassRole"
         ]
-        Resource = aws_iam_role.workstation_role.arn
+        Resource = [
+          aws_iam_role.workstation_role.arn,
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/AmazonSSMManagedInstanceCore"
+        ]
       },
       {
         Effect = "Allow"
