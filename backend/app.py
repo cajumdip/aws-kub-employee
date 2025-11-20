@@ -247,33 +247,19 @@ def root_health():
 @app.route('/api/employees/<employee_id>', methods=['DELETE'])
 def delete_employee(employee_id):
     """
-    Delete an employee (soft delete by setting status to 'inactive')
-    This triggers Lambda to clean up all resources:
-    - Terminate EC2 workstation
-    - Delete IAM user
-    - Remove access keys
-    - Delete secrets
-    - Clean up S3 objects
+    Delete an employee (Hard Delete to trigger 'REMOVE' stream event)
     """
     try:
-        timestamp = datetime.utcnow().isoformat()
-        
-        # Set status to inactive (triggers Lambda via DynamoDB Stream)
-        employees_table.update_item(
-            Key={'employee_id': employee_id},
-            UpdateExpression='SET #s = :status, updated_at = :updated_at',
-            ExpressionAttributeNames={'#s': 'status'},
-            ExpressionAttributeValues={
-                ':status': 'inactive',
-                ':updated_at': timestamp
-            }
+        # DELETE the item (triggers 'REMOVE' event for Lambda)
+        employees_table.delete_item(
+            Key={'employee_id': employee_id}
         )
         
-        app.logger.info(f"Marked employee as inactive (triggering cleanup): {employee_id}")
+        app.logger.info(f"Deleted employee: {employee_id}")
         
         return jsonify({
             'success': True,
-            'message': 'Employee deactivation initiated. Resources are being cleaned up automatically.'
+            'message': 'Employee deleted successfully. Cleanup initiated.'
         }), 200
         
     except Exception as e:
