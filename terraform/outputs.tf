@@ -84,3 +84,8 @@ output "ssm_domain_join_document_name" {
   description = "The name of the SSM document for domain joining"
   value       = aws_ssm_document.domain_join.name
 }
+
+output "ad_secret_arn" {
+  description = "The ARN of the AD Admin Secret"
+  value       = aws_secretsmanager_secret.ad_password.arn
+}

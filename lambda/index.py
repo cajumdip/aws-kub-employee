@@ -86,16 +86,16 @@ def handle_onboarding(record):
         instance_id, private_ip = launch_workstation(emp_name, emp_id, dept)
         
         # 4. Join Domain (SSM)
-        if instance_id and DOMAIN_JOIN_DOC:
+        if instance_id and DIRECTORY_ID:
             print(f"🔗 Joining {instance_id} to {DIRECTORY_NAME}...")
             try:
+                # Use the correct AWS document for domain join
                 ssm.create_association(
-                    Name=DOMAIN_JOIN_DOC,
+                    Name='AWS-JoinDirectoryServiceDomain',  # ← Correct document name
                     Targets=[{'Key': 'InstanceIds', 'Values': [instance_id]}],
                     Parameters={
                         'directoryId': [DIRECTORY_ID],
-                        'directoryName': [DIRECTORY_NAME],
-                        'dnsIpAddresses': get_directory_ips()
+                        'directoryName': [DIRECTORY_NAME]
                     }
                 )
                 print("✅ Domain Join Association created")
@@ -150,6 +150,7 @@ def handle_offboarding(record):
 def create_ad_user(name, username, email, dept, directory_name, secret_arn):
     """
     Creates a user in AWS Managed AD.
+    Uses port 389 for user creation, port 636 for password setting.
     """
     
     # 1. Retrieve Credentials
@@ -158,98 +159,218 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
     admin_user = secret['username']
     admin_pass = secret['password']
     
-    # 2. Resolve Domain to IPs (Crucial to avoid SNI errors)
-    try:
-        ip_list = socket.gethostbyname_ex(directory_name)[2]
-        print(f"ℹ️ Resolved {directory_name} to {ip_list}")
-    except Exception as e:
-        print(f"❌ DNS resolution failed, attempting to connect using name directly: {e}")
-        ip_list = [directory_name]
-
-    # 3. Configure TLS with Weak Ciphers
-    # We do NOT pass 'context' here as it causes TypeError in this version of ldap3.
-    # We use 'ciphers' string to tell OpenSSL to be permissive.
+    print(f"🔌 Connecting to Active Directory: {directory_name}...")
+    
+    # 2. Configure TLS with more permissive settings
     tls_config = Tls(
         validate=ssl.CERT_NONE,
-        version=ssl.PROTOCOL_TLSv1_2,
-        ciphers='ALL:@SECLEVEL=0' 
+        version=ssl.PROTOCOL_TLS  # Auto-negotiate TLS version
     )
-
-    last_error = None
-
-    # 4. Connect using IP Address (Bypasses hostname/SNI checks)
-    for ad_ip in ip_list:
-        print(f"🛡️ Connecting to {ad_ip} (IP-based connection)...")
+    
+    # 3. First, create user on port 389 (unencrypted - but doesn't set password)
+    try:
+        print(f"🛡️ Connecting to {directory_name}:389 for user creation...")
+        server_389 = Server(
+            directory_name,
+            port=389,
+            use_ssl=False,
+            get_info=ALL,
+            connect_timeout=10
+        )
+        
+        conn_389 = Connection(
+            server_389,
+            user=f"{admin_user}@{directory_name}",
+            password=admin_pass,
+            auto_bind=True,
+            receive_timeout=10
+        )
+        
+        print(f"✅ Connected on port 389")
+        
+        # Create the user (without password)
+        user_dn = _create_ad_user_object(conn_389, username, name, email, dept, directory_name)
+        conn_389.unbind()
+        
+    except Exception as e:
+        print(f"❌ Failed to create user object: {e}")
+        raise e
+    
+    # 4. Now set password using LDAPS on port 636
+    temp_password = f"Welcome{datetime.now().year}!"
+    
+    # Try to use domain name with LDAPS, fallback to IP if needed
+    ldaps_attempts = [
+        {'host': directory_name, 'desc': 'domain name'},
+    ]
+    
+    # Also try direct IPs
+    try:
+        ip_list = socket.gethostbyname_ex(directory_name)[2]
+        for ip in ip_list:
+            ldaps_attempts.append({'host': ip, 'desc': f'IP {ip}'})
+    except:
+        pass
+    
+    password_set = False
+    for attempt in ldaps_attempts:
         try:
-            # Passing IP as the host prevents the library from sending the Domain Name in SNI
-            server = Server(ad_ip, port=636, use_ssl=True, tls=tls_config)
+            print(f"🔐 Attempting password set via LDAPS using {attempt['desc']}...")
             
-            conn = Connection(
-                server,
-                user=f"{directory_name}\\{admin_user}",
+            server_636 = Server(
+                attempt['host'],
+                port=636,
+                use_ssl=True,
+                tls=tls_config,
+                get_info=ALL,
+                connect_timeout=10
+            )
+            
+            conn_636 = Connection(
+                server_636,
+                user=f"{admin_user}@{directory_name}",
                 password=admin_pass,
-                authentication=NTLM,
                 auto_bind=True,
                 receive_timeout=10
             )
             
-            print(f"✅ Connected successfully to {ad_ip}!")
-            return _perform_ad_operations(conn, username, name, email, dept, directory_name)
+            print(f"✅ Connected via LDAPS using {attempt['desc']}")
             
+            # Set password
+            pwd_value = f'"{temp_password}"'.encode('utf-16-le')
+            conn_636.modify(user_dn, {'unicodePwd': [(2, [pwd_value])]})
+            
+            if conn_636.result['result'] == 0:
+                print(f"✅ Password set successfully via {attempt['desc']}")
+                password_set = True
+            else:
+                print(f"⚠️ Password set failed via {attempt['desc']}: {conn_636.result['description']}")
+            
+            # Enable account
+            conn_636.modify(user_dn, {'userAccountControl': [(2, [512])]})
+            print(f"✅ Account enabled")
+            
+            conn_636.unbind()
+            
+            if password_set:
+                break
+                
         except Exception as e:
-            print(f"❌ Failed to connect to {ad_ip}: {e}")
-            last_error = e
-            
-    raise last_error
-
-def _perform_ad_operations(conn, username, name, email, dept, directory_name):
-    """Internal helper to actually create the user once connected"""
-    import base64
+            print(f"❌ LDAPS failed using {attempt['desc']}: {e}")
+            continue
     
-    # Determine correct OU
+    if not password_set:
+        print(f"⚠️ WARNING: User created but password could not be set via LDAPS. Manual password reset required.")
+    
+    return temp_password
+
+def _create_ad_user_object(conn, username, name, email, dept, directory_name):
+    """Creates the AD user object (without password)"""
+    
     dc_parts = directory_name.split('.')
     netbios_name = dc_parts[0].upper()
+    
+    # AWS Managed AD: Use the delegated OU
     dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
     
-    temp_password = f"Welcome{datetime.now().year}!"
     print(f"🔧 Creating AD Object: {dn}")
     
-    # Create User Object
+    # Split name properly
+    name_parts = name.strip().split()
+    first_name = name_parts[0] if name_parts else username
+    last_name = name_parts[-1] if len(name_parts) > 1 else username
+    
+    # Create User Object (without password - userAccountControl 544 means disabled)
     conn.add(dn, attributes={
         'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
         'cn': username,
         'sAMAccountName': username,
         'userPrincipalName': email,
-        'givenName': name.split()[0],
-        'sn': name.split()[-1] if ' ' in name else name,
+        'givenName': first_name,
+        'sn': last_name,
         'displayName': name,
         'department': dept,
-        'userAccountControl': 512
+        'userAccountControl': 544  # Disabled until password is set
     })
     
-    if conn.result['result'] != 0:
-        if conn.result['result'] == 68: # User exists
+    if conn.result['result'] == 0:
+        print(f"✅ User object created")
+    elif conn.result['result'] == 68:
+        print(f"⚠️ User {username} already exists")
+    else:
+        raise Exception(f"User creation failed: {conn.result['description']}")
+    
+    return dn
+def _perform_ad_operations(conn, username, name, email, dept, directory_name):
+    """Internal helper to actually create the user once connected"""
+    
+    # Determine correct OU
+    dc_parts = directory_name.split('.')
+    netbios_name = dc_parts[0].upper()
+    
+    # Standard Users container (change if you have custom OUs)
+    dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
+    
+    temp_password = f"Welcome{datetime.now().year}!"
+    print(f"🔧 Creating AD Object: {dn}")
+    
+    # Split name properly
+    name_parts = name.strip().split()
+    first_name = name_parts[0] if name_parts else username
+    last_name = name_parts[-1] if len(name_parts) > 1 else username
+    
+    # Create User Object
+    try:
+        conn.add(dn, attributes={
+            'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
+            'cn': username,
+            'sAMAccountName': username,
+            'userPrincipalName': email,
+            'givenName': first_name,
+            'sn': last_name,
+            'displayName': name,
+            'department': dept,
+            'userAccountControl': 544  # Normal account + password not required (temporarily)
+        })
+        
+        if conn.result['result'] == 0:
+            print(f"✅ User object created")
+        elif conn.result['result'] == 68:
             print(f"⚠️ User {username} already exists. Updating password only.")
         else:
-            raise Exception(f"User creation failed: {conn.result}")
-    else:
-        print(f"✅ User object created")
-    
-    # Set Password
-    try:
-        pwd_value = f'"{temp_password}"'.encode('utf-16-le')
-        conn.modify(dn, {'unicodePwd': [('MODIFY_REPLACE', [base64.b64encode(pwd_value).decode()])]})
-        print(f"✅ Password set successfully")
+            raise Exception(f"User creation failed: {conn.result['description']}")
     except Exception as e:
-        print(f"❌ Failed to set password: {e}")
+        print(f"❌ User creation error: {e}")
         raise e
     
-    # Ensure Enabled
-    conn.modify(dn, {'userAccountControl': [('MODIFY_REPLACE', [512])]})
-    conn.unbind()
+    # Set Password - Correct format for unicodePwd
+    try:
+        # Password must be enclosed in quotes and UTF-16-LE encoded
+        pwd_value = f'"{temp_password}"'.encode('utf-16-le')
+        
+        conn.modify(dn, {
+            'unicodePwd': [(2, [pwd_value])]  # MODIFY_REPLACE = 2
+        })
+        
+        if conn.result['result'] == 0:
+            print(f"✅ Password set successfully")
+        else:
+            print(f"⚠️ Password set result: {conn.result['description']}")
+    except Exception as e:
+        print(f"❌ Failed to set password: {e}")
+        # Don't raise - user is created, can reset password manually
     
+    # Enable Account (512 = normal enabled account)
+    try:
+        conn.modify(dn, {
+            'userAccountControl': [(2, [512])]
+        })
+        print(f"✅ Account enabled")
+    except Exception as e:
+        print(f"⚠️ Failed to enable account: {e}")
+    
+    conn.unbind()
     return temp_password
-
 # --- Infrastructure Helpers ---
 
 def launch_workstation(name, emp_id, dept):
