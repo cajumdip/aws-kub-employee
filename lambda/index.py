@@ -2,13 +2,12 @@ import json
 import boto3
 import os
 import urllib3
-import ssl
 import socket
 from datetime import datetime
 
 # Try to import ldap3 for AD operations
 try:
-    from ldap3 import Server, Connection, ALL, NTLM, Tls
+    from ldap3 import Server, Connection, ALL
     LDAP_AVAILABLE = True
 except ImportError:
     LDAP_AVAILABLE = False
@@ -150,7 +149,7 @@ def handle_offboarding(record):
 def create_ad_user(name, username, email, dept, directory_name, secret_arn):
     """
     Creates a user in AWS Managed AD.
-    Uses port 389 for user creation, port 636 for password setting.
+    Uses port 389 for user creation, SSM for password setting.
     """
     
     # 1. Retrieve Credentials
@@ -161,13 +160,7 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
     
     print(f"🔌 Connecting to Active Directory: {directory_name}...")
     
-    # 2. Configure TLS with more permissive settings
-    tls_config = Tls(
-        validate=ssl.CERT_NONE,
-        version=ssl.PROTOCOL_TLS  # Auto-negotiate TLS version
-    )
-    
-    # 3. First, create user on port 389 (unencrypted - but doesn't set password)
+    # 2. Create user on port 389 (unencrypted for user object creation)
     try:
         print(f"🛡️ Connecting to {directory_name}:389 for user creation...")
         server_389 = Server(
@@ -196,71 +189,18 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
         print(f"❌ Failed to create user object: {e}")
         raise e
     
-    # 4. Now set password using LDAPS on port 636
+    # 3. Set password via SSM Run Command (more reliable than LDAPS from Lambda)
     temp_password = f"Welcome{datetime.now().year}!"
     
-    # Try to use domain name with LDAPS, fallback to IP if needed
-    ldaps_attempts = [
-        {'host': directory_name, 'desc': 'domain name'},
-    ]
+    # Wait a moment for the workstation to potentially be ready
+    import time
+    time.sleep(5)
     
-    # Also try direct IPs
-    try:
-        ip_list = socket.gethostbyname_ex(directory_name)[2]
-        for ip in ip_list:
-            ldaps_attempts.append({'host': ip, 'desc': f'IP {ip}'})
-    except:
-        pass
-    
-    password_set = False
-    for attempt in ldaps_attempts:
-        try:
-            print(f"🔐 Attempting password set via LDAPS using {attempt['desc']}...")
-            
-            server_636 = Server(
-                attempt['host'],
-                port=636,
-                use_ssl=True,
-                tls=tls_config,
-                get_info=ALL,
-                connect_timeout=10
-            )
-            
-            conn_636 = Connection(
-                server_636,
-                user=f"{admin_user}@{directory_name}",
-                password=admin_pass,
-                auto_bind=True,
-                receive_timeout=10
-            )
-            
-            print(f"✅ Connected via LDAPS using {attempt['desc']}")
-            
-            # Set password
-            pwd_value = f'"{temp_password}"'.encode('utf-16-le')
-            conn_636.modify(user_dn, {'unicodePwd': [(2, [pwd_value])]})
-            
-            if conn_636.result['result'] == 0:
-                print(f"✅ Password set successfully via {attempt['desc']}")
-                password_set = True
-            else:
-                print(f"⚠️ Password set failed via {attempt['desc']}: {conn_636.result['description']}")
-            
-            # Enable account
-            conn_636.modify(user_dn, {'userAccountControl': [(2, [512])]})
-            print(f"✅ Account enabled")
-            
-            conn_636.unbind()
-            
-            if password_set:
-                break
-                
-        except Exception as e:
-            print(f"❌ LDAPS failed using {attempt['desc']}: {e}")
-            continue
+    password_set = set_ad_password_via_ssm(username, temp_password, directory_name)
     
     if not password_set:
-        print(f"⚠️ WARNING: User created but password could not be set via LDAPS. Manual password reset required.")
+        print(f"⚠️ WARNING: User created but password could not be set via SSM.")
+        print(f"ℹ️ The workstation may still be initializing. Password will be set after domain join completes.")
     
     return temp_password
 
@@ -301,76 +241,48 @@ def _create_ad_user_object(conn, username, name, email, dept, directory_name):
         raise Exception(f"User creation failed: {conn.result['description']}")
     
     return dn
-def _perform_ad_operations(conn, username, name, email, dept, directory_name):
-    """Internal helper to actually create the user once connected"""
-    
-    # Determine correct OU
-    dc_parts = directory_name.split('.')
-    netbios_name = dc_parts[0].upper()
-    
-    # Standard Users container (change if you have custom OUs)
-    dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
-    
-    temp_password = f"Welcome{datetime.now().year}!"
-    print(f"🔧 Creating AD Object: {dn}")
-    
-    # Split name properly
-    name_parts = name.strip().split()
-    first_name = name_parts[0] if name_parts else username
-    last_name = name_parts[-1] if len(name_parts) > 1 else username
-    
-    # Create User Object
+
+def set_ad_password_via_ssm(username, password, directory_name):
+    """Set AD password using SSM Run Command on a domain-joined instance"""
     try:
-        conn.add(dn, attributes={
-            'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
-            'cn': username,
-            'sAMAccountName': username,
-            'userPrincipalName': email,
-            'givenName': first_name,
-            'sn': last_name,
-            'displayName': name,
-            'department': dept,
-            'userAccountControl': 544  # Normal account + password not required (temporarily)
-        })
+        # Find a running domain-joined instance
+        response = ec2.describe_instances(
+            Filters=[
+                {'Name': 'tag:Domain', 'Values': [directory_name]},
+                {'Name': 'instance-state-name', 'Values': ['running']}
+            ]
+        )
         
-        if conn.result['result'] == 0:
-            print(f"✅ User object created")
-        elif conn.result['result'] == 68:
-            print(f"⚠️ User {username} already exists. Updating password only.")
-        else:
-            raise Exception(f"User creation failed: {conn.result['description']}")
-    except Exception as e:
-        print(f"❌ User creation error: {e}")
-        raise e
-    
-    # Set Password - Correct format for unicodePwd
-    try:
-        # Password must be enclosed in quotes and UTF-16-LE encoded
-        pwd_value = f'"{temp_password}"'.encode('utf-16-le')
+        if not response['Reservations']:
+            print("⚠️ No domain-joined instance available for password reset")
+            return False
         
-        conn.modify(dn, {
-            'unicodePwd': [(2, [pwd_value])]  # MODIFY_REPLACE = 2
-        })
+        instance_id = response['Reservations'][0]['Instances'][0]['InstanceId']
         
-        if conn.result['result'] == 0:
-            print(f"✅ Password set successfully")
-        else:
-            print(f"⚠️ Password set result: {conn.result['description']}")
+        print(f"🔐 Setting password via SSM on instance {instance_id}...")
+        
+        # Run PowerShell command to set password
+        command_response = ssm.send_command(
+            InstanceIds=[instance_id],
+            DocumentName='AWS-RunPowerShellScript',
+            Parameters={
+                'commands': [
+                    f'$password = ConvertTo-SecureString "{password}" -AsPlainText -Force',
+                    f'Set-ADAccountPassword -Identity "{username}" -NewPassword $password -Reset',
+                    f'Enable-ADAccount -Identity "{username}"'
+                ]
+            },
+            Comment=f'Set password for {username}'
+        )
+        
+        command_id = command_response['Command']['CommandId']
+        print(f"✅ Password reset command sent: {command_id}")
+        return True
+        
     except Exception as e:
-        print(f"❌ Failed to set password: {e}")
-        # Don't raise - user is created, can reset password manually
-    
-    # Enable Account (512 = normal enabled account)
-    try:
-        conn.modify(dn, {
-            'userAccountControl': [(2, [512])]
-        })
-        print(f"✅ Account enabled")
-    except Exception as e:
-        print(f"⚠️ Failed to enable account: {e}")
-    
-    conn.unbind()
-    return temp_password
+        print(f"❌ Failed to set password via SSM: {e}")
+        return False
+
 # --- Infrastructure Helpers ---
 
 def launch_workstation(name, emp_id, dept):
