@@ -33,3 +33,22 @@ variable "alarm_sns_topic_arn" {
   type        = string
   default     = ""
 }
+
+variable "directory_name" {
+  description = "The fully qualified name for the directory (e.g., innovatech.local)"
+  type        = string
+  default     = "innovatech.local"
+}
+
+variable "directory_password" {
+  description = "The password for the directory administrator"
+  type        = string
+  sensitive   = true
+  # Note: Password must be complex! (Upper, Lower, Number, Special)
+}
+
+variable "directory_edition" {
+  description = "The edition of the directory (Standard or Enterprise)"
+  type        = string
+  default     = "Standard"
+}

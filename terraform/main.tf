@@ -923,11 +923,23 @@ resource "aws_security_group" "lambda" {
   }
 }
 
+# ===== Store AD Password for Lambda =====
+resource "aws_secretsmanager_secret" "ad_password" {
+  name = "innovatech/directory/admin"
+  tags = { Name = "${var.project_name}-ad-secret" }
+}
+
+resource "aws_secretsmanager_secret_version" "ad_password_val" {
+  secret_id     = aws_secretsmanager_secret.ad_password.id
+  secret_string = jsonencode({
+    username = "Admin"
+    password = var.directory_password
+  })
+}
+
 resource "aws_lambda_function" "onboarding" {
   # Use the dynamic zip file created by the data source above
   filename         = data.archive_file.lambda_zip.output_path
-  
-  # This hash triggers an update whenever the content of the zip changes
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
   
   function_name    = "${var.project_name}-onboarding-automation"
@@ -955,13 +967,19 @@ resource "aws_lambda_function" "onboarding" {
       WORKSTATION_SUBNET_ID     = aws_subnet.workstations[0].id
       WORKSTATION_SG_ID         = aws_security_group.workstations.id
       WORKSTATION_PROFILE_NAME  = aws_iam_instance_profile.workstation_profile.name
+      # --- NEW AD VARIABLES ---
+      DIRECTORY_ID              = aws_directory_service_directory.main.id
+      DIRECTORY_NAME            = var.directory_name
+      AD_SECRET_ARN             = aws_secretsmanager_secret.ad_password.arn
+      DOMAIN_JOIN_DOC           = aws_ssm_document.domain_join.name
     }
   }
 
   depends_on = [
     aws_iam_role_policy.lambda_onboarding,
     aws_instance.nat,
-    data.archive_file.lambda_zip  # Explicit dependency
+    data.archive_file.lambda_zip,
+    aws_directory_service_directory.main
   ]
 }
 
@@ -1081,4 +1099,63 @@ DOC
   tags = {
     Name = "${var.project_name}-security-baseline"
   }
+}
+
+# ===== AWS Managed Microsoft AD =====
+resource "aws_directory_service_directory" "main" {
+  name     = var.directory_name
+  password = var.directory_password
+  edition  = var.directory_edition
+  type     = "MicrosoftAD"
+
+  vpc_settings {
+    vpc_id     = aws_vpc.main.id
+    # Use the private subnets for the Domain Controllers
+    subnet_ids = aws_subnet.private[*].id
+  }
+
+  tags = {
+    Name = "${var.project_name}-directory"
+  }
+}
+
+# ===== DHCP Options (Crucial for Domain Joining) =====
+# This tells the VPC to use the AD Domain Controllers as DNS servers
+resource "aws_vpc_dhcp_options" "ad_dhcp" {
+  domain_name          = var.directory_name
+  domain_name_servers  = aws_directory_service_directory.main.dns_ip_addresses
+  ntp_servers          = ["169.254.169.123"] # AWS Time Sync Service
+  netbios_name_servers = aws_directory_service_directory.main.dns_ip_addresses
+  netbios_node_type    = 2
+
+  tags = {
+    Name = "${var.project_name}-ad-dhcp"
+  }
+}
+
+resource "aws_vpc_dhcp_options_association" "ad_dhcp_assoc" {
+  vpc_id          = aws_vpc.main.id
+  dhcp_options_id = aws_vpc_dhcp_options.ad_dhcp.id
+}
+
+# ===== SSM Document for Domain Join =====
+# This defines the automation to join instances to the domain
+resource "aws_ssm_document" "domain_join" {
+  name          = "${var.project_name}-domain-join"
+  document_type = "Command"
+  content = jsonencode({
+    schemaVersion = "2.2"
+    description   = "Join instances to the Innovatech Active Directory"
+    mainSteps = [
+      {
+        action = "aws:domainJoin"
+        name   = "domainJoin"
+        inputs = {
+          directoryId    = aws_directory_service_directory.main.id
+          directoryName  = var.directory_name
+          dnsIpAddresses = aws_directory_service_directory.main.dns_ip_addresses
+        }
+      }
+    ]
+  })
 }

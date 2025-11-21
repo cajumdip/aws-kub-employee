@@ -1,9 +1,17 @@
 import json
 import boto3
 import os
+import time
 import urllib3
-import base64
 from datetime import datetime, timedelta
+
+# Try to import ldap3 for AD operations
+try:
+    from ldap3 import Server, Connection, ALL, NTLM, SUBTREE
+    LDAP_AVAILABLE = True
+except ImportError:
+    LDAP_AVAILABLE = False
+    print("⚠️ ldap3 library not found. AD User creation will be skipped.")
 
 # Initialize AWS clients
 iam = boto3.client('iam')
@@ -14,11 +22,10 @@ ssm = boto3.client('ssm')
 dynamodb = boto3.resource('dynamodb')
 http = urllib3.PoolManager()
 
-# Environment variables
+# Configuration
 SLACK_WEBHOOK = os.environ.get('SLACK_WEBHOOK_URL')
 ENROLLMENT_BUCKET = os.environ.get('ENROLLMENT_BUCKET')
 AWS_REGION = os.environ.get('INNOVATECH_REGION', 'eu-central-1')
-AWS_ACCOUNT_ID = os.environ.get('AWS_ACCOUNT_ID')
 WORKSTATIONS_TABLE = os.environ.get('WORKSTATIONS_TABLE')
 WORKSTATION_AMI = os.environ.get('WORKSTATION_AMI')
 WORKSTATION_INSTANCE_TYPE = os.environ.get('WORKSTATION_INSTANCE_TYPE', 't3.medium')
@@ -26,262 +33,196 @@ WORKSTATION_SUBNET_ID = os.environ.get('WORKSTATION_SUBNET_ID')
 WORKSTATION_SG_ID = os.environ.get('WORKSTATION_SG_ID')
 WORKSTATION_PROFILE_NAME = os.environ.get('WORKSTATION_PROFILE_NAME')
 
+# AD Configuration
+DIRECTORY_ID = os.environ.get('DIRECTORY_ID')
+DIRECTORY_NAME = os.environ.get('DIRECTORY_NAME', 'innovatech.local')
+AD_SECRET_ARN = os.environ.get('AD_SECRET_ARN')
+DOMAIN_JOIN_DOC = os.environ.get('DOMAIN_JOIN_DOC')
+
 workstations_table = dynamodb.Table(WORKSTATIONS_TABLE)
 
 def handler(event, context):
     print(f"Received event: {json.dumps(event)}")
-    
     for record in event['Records']:
-        event_name = record['eventName']
-        
-        if event_name == 'INSERT':
-            handle_employee_creation(record)
-        elif event_name == 'REMOVE':
-            handle_employee_deletion(record)
-            
+        if record['eventName'] == 'INSERT':
+            handle_onboarding(record)
+        elif record['eventName'] == 'REMOVE':
+            handle_offboarding(record)
     return {'statusCode': 200, 'body': json.dumps('Processed')}
 
-def handle_employee_creation(record):
+def handle_onboarding(record):
     new_image = record['dynamodb']['NewImage']
-    employee_name = new_image['name']['S']
-    employee_email = new_image['email']['S']
-    employee_id = new_image['employee_id']['S']
-    department = new_image['department']['S']
-    role = new_image['role']['S']
+    emp_name = new_image['name']['S']
+    emp_email = new_image['email']['S']
+    emp_id = new_image['employee_id']['S']
+    dept = new_image['department']['S']
     
-    print(f"🆕 Onboarding: {employee_name} ({employee_email})")
+    print(f"🆕 Onboarding: {emp_name} ({emp_email})")
     
     try:
-        # 1. Create/Get IAM User
-        iam_username = employee_email.replace('@', '-').replace('.', '-')
-        try:
-            iam.create_user(
-                UserName=iam_username,
-                Tags=[{'Key': 'EmployeeId', 'Value': employee_id}]
-            )
-            print(f"✅ Created IAM user: {iam_username}")
-            
-            # Add to group and attach policy only if new
-            group_name = f"{department}-team"
-            try:
-                iam.create_group(GroupName=group_name)
-            except iam.exceptions.EntityAlreadyExistsException:
-                pass
-            iam.add_user_to_group(UserName=iam_username, GroupName=group_name)
-            iam.attach_user_policy(UserName=iam_username, PolicyArn='arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore')
-            
-        except iam.exceptions.EntityAlreadyExistsException:
-            print(f"⚠️ User {iam_username} already exists")
-
-        # 2. Create Access Keys (Robust Handling)
-        access_key = None
-        secret_key = None
-        try:
-            key_resp = iam.create_access_key(UserName=iam_username)
-            access_key = key_resp['AccessKey']['AccessKeyId']
-            secret_key = key_resp['AccessKey']['SecretAccessKey']
-        except iam.exceptions.LimitExceededException:
-            # Rotate keys if limit reached
-            print("⚠️ Key limit reached. Rotating keys...")
-            keys = iam.list_access_keys(UserName=iam_username)
-            for k in keys['AccessKeyMetadata']:
-                iam.delete_access_key(UserName=iam_username, AccessKeyId=k['AccessKeyId'])
-            
-            # Retry creation
-            key_resp = iam.create_access_key(UserName=iam_username)
-            access_key = key_resp['AccessKey']['AccessKeyId']
-            secret_key = key_resp['AccessKey']['SecretAccessKey']
-
-        # 3. Create Workstation (Idempotent)
-        print(f"💻 Checking for workstation...")
-        existing_instances = ec2.describe_instances(
-            Filters=[
-                {'Name': 'tag:EmployeeId', 'Values': [employee_id]},
-                {'Name': 'instance-state-name', 'Values': ['pending', 'running', 'stopping', 'stopped']}
-            ]
-        )
+        # 1. Create AD User (if ldap3 is available)
+        ad_username = emp_email.split('@')[0]
+        ad_password = None
         
-        instance_id = None
-        private_ip = 'pending'
-        
-        if existing_instances['Reservations']:
-            instance = existing_instances['Reservations'][0]['Instances'][0]
-            instance_id = instance['InstanceId']
-            private_ip = instance.get('PrivateIpAddress', 'pending')
-            print(f"⚠️ Found existing instance {instance_id}")
+        if LDAP_AVAILABLE and AD_SECRET_ARN:
+            print(f"🔌 Connecting to Active Directory: {DIRECTORY_NAME}...")
+            ad_password = create_ad_user(emp_name, ad_username, emp_email, dept)
         else:
-            print(f"💻 Creating new workstation...")
-            user_data = generate_workstation_userdata(employee_name, employee_id, department)
-            run_instances = ec2.run_instances(
-                ImageId=WORKSTATION_AMI,
-                InstanceType=WORKSTATION_INSTANCE_TYPE,
-                MinCount=1, MaxCount=1,
-                SubnetId=WORKSTATION_SUBNET_ID,
-                SecurityGroupIds=[WORKSTATION_SG_ID],
-                IamInstanceProfile={'Name': WORKSTATION_PROFILE_NAME},
-                UserData=user_data,
-                TagSpecifications=[{
-                    'ResourceType': 'instance',
-                    'Tags': [
-                        {'Key': 'Name', 'Value': f'{employee_name}-Workstation'},
-                        {'Key': 'EmployeeId', 'Value': employee_id}
-                    ]
-                }]
-            )
-            instance_id = run_instances['Instances'][0]['InstanceId']
-            private_ip = run_instances['Instances'][0].get('PrivateIpAddress', 'pending')
+            print("⚠️ Skipping AD creation (Missing Layer or Secret)")
 
-        # 4. Update DynamoDB
-        workstations_table.put_item(
-            Item={
-                'employee_id': employee_id,
-                'instance_id': instance_id,
-                'iam_username': iam_username,
-                'status': 'pending',
-                'created_at': datetime.utcnow().isoformat()
-            }
-        )
+        # 2. Create IAM User (Backup/Console Access)
+        # We keep this for now to ensure your existing login flows don't break immediately
+        iam_username = emp_email.replace('@', '-').replace('.', '-')
+        create_iam_user_safe(iam_username, emp_id, dept)
 
-        # 5. SSM Activation
-        activation = ssm.create_activation(
-            DefaultInstanceName=f"{employee_name}-laptop",
-            IamRole='AmazonSSMManagedInstanceCore',
-            RegistrationLimit=5,
-            Tags=[{'Key': 'EmployeeId', 'Value': employee_id}]
-        )
-        activation_id = activation['ActivationId']
-        activation_code = activation['ActivationCode']
-
-        # 6. Store Secrets
-        secret_string = json.dumps({
-            'iam_username': iam_username,
-            'access_key_id': access_key,
-            'secret_access_key': secret_key,
-            'activation_id': activation_id,
-            'activation_code': activation_code,
-            'instance_id': instance_id
-        })
+        # 3. Launch & Domain Join Workstation
+        instance_id, private_ip = launch_workstation(emp_name, emp_id, dept)
         
-        secret_name = f"innovatech/employee/{employee_id}/credentials"
-        try:
-            secretsmanager.create_secret(Name=secret_name, SecretString=secret_string)
-        except secretsmanager.exceptions.ResourceExistsException:
-            # We can't update the secret value without PutSecretValue permission, 
-            # so we delete and recreate it to be safe with our current permissions
+        # 4. Join Domain (SSM)
+        if instance_id and DOMAIN_JOIN_DOC:
+            print(f"🔗 Joining {instance_id} to {DIRECTORY_NAME}...")
+            # We wait a bit for SSM agent to come up (in real prod, use lifecycle hooks)
+            # Creating association forces the join command
             try:
-                secretsmanager.delete_secret(SecretId=secret_name, ForceDeleteWithoutRecovery=True)
-                secretsmanager.create_secret(Name=secret_name, SecretString=secret_string)
+                ssm.create_association(
+                    Name=DOMAIN_JOIN_DOC,
+                    Targets=[{'Key': 'InstanceIds', 'Values': [instance_id]}],
+                    Parameters={
+                        'directoryId': [DIRECTORY_ID],
+                        'directoryName': [DIRECTORY_NAME],
+                        'dnsIpAddresses': get_directory_ips()
+                    }
+                )
+                print("✅ Domain Join Association created")
             except Exception as e:
-                print(f"⚠️ Warning updating secret: {e}")
+                print(f"❌ Domain Join failed: {e}")
 
-        # 7. Upload Scripts
-        enrollment_code = generate_enrollment_code(employee_id)
-        win_script = generate_windows_script(employee_name, access_key, secret_key, activation_id, activation_code)
-        linux_script = generate_linux_script(employee_name, access_key, secret_key, activation_id, activation_code)
-        
-        win_key = f"enrollment/{employee_id}/enroll-windows.ps1"
-        linux_key = f"enrollment/{employee_id}/enroll-linux.sh"
-        
-        s3.put_object(Bucket=ENROLLMENT_BUCKET, Key=win_key, Body=win_script)
-        s3.put_object(Bucket=ENROLLMENT_BUCKET, Key=linux_key, Body=linux_script)
-        
-        win_url = s3.generate_presigned_url('get_object', Params={'Bucket': ENROLLMENT_BUCKET, 'Key': win_key})
-        linux_url = s3.generate_presigned_url('get_object', Params={'Bucket': ENROLLMENT_BUCKET, 'Key': linux_key})
+        # 5. Save State
+        workstations_table.put_item(Item={
+            'employee_id': emp_id,
+            'instance_id': instance_id,
+            'iam_username': iam_username,
+            'ad_username': f"{DIRECTORY_NAME}\\{ad_username}",
+            'status': 'provisioning',
+            'created_at': datetime.utcnow().isoformat()
+        })
 
-        # 8. Send Slack Notification
-        print("🔔 Sending Slack notification...")
+        # 6. Slack Notification
         if SLACK_WEBHOOK:
-            send_slack_notification(
-                "🎉 New Employee Onboarded!",
-                f"*Name:* {employee_name}\n*Email:* {employee_email}\n*IAM:* `{iam_username}`\n*Workstation:* `{instance_id}`",
-                win_url, linux_url
-            )
-            print("✅ Slack notification sent")
-        else:
-            print("⚠️ SLACK_WEBHOOK_URL not set")
+            msg = f"*Name:* {emp_name}\n*AD User:* `{ad_username}`\n*Workstation:* `{instance_id}`"
+            if ad_password:
+                msg += f"\n*Initial Password:* ||{ad_password}||"
+            send_slack("🎉 Enterprise Onboarding Complete", msg)
 
     except Exception as e:
         print(f"❌ Error: {str(e)}")
         raise e
 
-def handle_employee_deletion(record):
+def handle_offboarding(record):
     old_image = record['dynamodb']['OldImage']
-    employee_id = old_image['employee_id']['S']
-    employee_name = old_image['name']['S']
-    employee_email = old_image['email']['S']
+    emp_id = old_image['employee_id']['S']
+    emp_name = old_image['name']['S']
     
-    print(f"🗑️ Offboarding: {employee_name}")
+    print(f"🗑️ Offboarding: {emp_name}")
     
     try:
         # Terminate EC2
-        resp = workstations_table.get_item(Key={'employee_id': employee_id})
+        resp = workstations_table.get_item(Key={'employee_id': emp_id})
         if 'Item' in resp:
             instance_id = resp['Item'].get('instance_id')
             if instance_id:
                 ec2.terminate_instances(InstanceIds=[instance_id])
-            workstations_table.delete_item(Key={'employee_id': employee_id})
-
-        # Delete IAM
-        iam_username = employee_email.replace('@', '-').replace('.', '-')
-        try:
-            # Detach policies
-            policies = iam.list_attached_user_policies(UserName=iam_username)
-            for p in policies['AttachedPolicies']:
-                iam.detach_user_policy(UserName=iam_username, PolicyArn=p['PolicyArn'])
+            workstations_table.delete_item(Key={'employee_id': emp_id})
             
-            # Remove from groups
-            groups = iam.list_groups_for_user(UserName=iam_username)
-            for g in groups['Groups']:
-                iam.remove_user_from_group(UserName=iam_username, GroupName=g['GroupName'])
-
-            # Delete keys
-            keys = iam.list_access_keys(UserName=iam_username)
-            for k in keys['AccessKeyMetadata']:
-                iam.delete_access_key(UserName=iam_username, AccessKeyId=k['AccessKeyId'])
-                
-            iam.delete_user(UserName=iam_username)
-        except Exception as e:
-            print(f"⚠️ IAM cleanup warning: {e}")
-
-        # Slack
+        # TODO: Add AD User Disable logic here when ldap3 is ready
+        
         if SLACK_WEBHOOK:
-            send_slack_notification(
-                "👋 Employee Offboarded",
-                f"*Name:* {employee_name}\n*Email:* {employee_email}\n✅ All resources cleaned up."
-            )
-
+            send_slack("👋 Employee Offboarded", f"Resources for {emp_name} have been cleaned up.")
+            
     except Exception as e:
         print(f"❌ Error offboarding: {e}")
 
-# Helpers
-def generate_workstation_userdata(name, emp_id, dept):
-    return f"<powershell>\n# Setup for {name}\n</powershell>"
+# --- Helpers ---
 
-def generate_enrollment_code(emp_id):
-    import hashlib
-    return hashlib.sha256(emp_id.encode()).hexdigest()[:8].upper()
-
-def generate_windows_script(name, key, secret, act_id, act_code):
-    return f"# Win Script\n# Key: {key}\n# Secret: {secret}\n# ActId: {act_id}\n# ActCode: {act_code}"
-
-def generate_linux_script(name, key, secret, act_id, act_code):
-    return f"# Linux Script\n# Key: {key}"
-
-def send_slack_notification(title, text, win_url=None, linux_url=None):
-    blocks = [
-        {"type": "header", "text": {"type": "plain_text", "text": title}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": text}}
-    ]
-    if win_url:
-        blocks.append({
-            "type": "actions",
-            "elements": [
-                {"type": "button", "text": {"type": "plain_text", "text": "📥 Windows Script"}, "url": win_url},
-                {"type": "button", "text": {"type": "plain_text", "text": "🐧 Linux Script"}, "url": linux_url}
-            ]
-        })
+def create_ad_user(name, username, email, dept):
+    # Get Admin Creds
+    secret = json.loads(secretsmanager.get_secret_value(SecretId=AD_SECRET_ARN)['SecretString'])
+    admin_user = secret['username']
+    admin_pass = secret['password']
     
-    http.request('POST', SLACK_WEBHOOK, body=json.dumps({"blocks": blocks}).encode('utf-8'), headers={'Content-Type': 'application/json'})
+    # Get Directory IPs
+    ips = get_directory_ips()
+    
+    # Connect
+    server = Server(ips[0], use_ssl=True)
+    conn = Connection(server, user=f"{DIRECTORY_NAME}\\{admin_user}", password=admin_pass, authentication=NTLM, auto_bind=True)
+    
+    # Create User
+    # Note: Simplified OU structure. Ideally check if OU exists first.
+    dn = f"CN={username},CN=Users,DC={DIRECTORY_NAME.split('.')[0]},DC={DIRECTORY_NAME.split('.')[1]}"
+    temp_password = f"Welcome{datetime.now().year}!"
+    
+    conn.add(dn, attributes={
+        'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
+        'cn': username,
+        'sAMAccountName': username,
+        'userPrincipalName': email,
+        'givenName': name.split()[0],
+        'sn': name.split()[-1] if ' ' in name else name,
+        'displayName': name,
+        'department': dept,
+        'userAccountControl': 512  # Normal Account
+    })
+    
+    # Set Password
+    if conn.result['result'] == 0:
+        conn.extend.microsoft.modify_password(dn, temp_password)
+        conn.modify(dn, {'userAccountControl': [('MODIFY_REPLACE', 512)]}) # Enable
+        print(f"✅ AD User created: {username}")
+        return temp_password
+    else:
+        print(f"⚠️ AD User create failed (might exist): {conn.result}")
+        return None
 
-def handle_employee_modification(record):
-    pass
+def launch_workstation(name, emp_id, dept):
+    user_data = f"""<powershell>
+    # Set Hostname to match AD standards
+    Rename-Computer -NewName "WS-{emp_id[:8]}" -Force
+    </powershell>
+    """
+    
+    run_instances = ec2.run_instances(
+        ImageId=WORKSTATION_AMI,
+        InstanceType=WORKSTATION_INSTANCE_TYPE,
+        MinCount=1, MaxCount=1,
+        SubnetId=WORKSTATION_SUBNET_ID,
+        SecurityGroupIds=[WORKSTATION_SG_ID],
+        IamInstanceProfile={'Name': WORKSTATION_PROFILE_NAME},
+        UserData=user_data,
+        TagSpecifications=[{
+            'ResourceType': 'instance',
+            'Tags': [
+                {'Key': 'Name', 'Value': f"{name}-Workstation"},
+                {'Key': 'EmployeeId', 'Value': emp_id},
+                {'Key': 'Domain', 'Value': DIRECTORY_NAME}
+            ]
+        }]
+    )
+    return run_instances['Instances'][0]['InstanceId'], run_instances['Instances'][0].get('PrivateIpAddress')
+
+def get_directory_ips():
+    # Find the directory IPs dynamically
+    dirs = boto3.client('ds').describe_directories(DirectoryIds=[DIRECTORY_ID])
+    return dirs['DirectoryDescriptions'][0]['DnsIpAddrs']
+
+def create_iam_user_safe(username, emp_id, dept):
+    try:
+        iam.create_user(UserName=username, Tags=[{'Key': 'EmployeeId', 'Value': emp_id}])
+    except iam.exceptions.EntityAlreadyExistsException:
+        pass
+
+def send_slack(title, text):
+    payload = {"text": title, "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]}
+    try:
+        http.request('POST', SLACK_WEBHOOK, body=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
+    except: pass

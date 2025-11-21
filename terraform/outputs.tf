@@ -67,3 +67,20 @@ output "enrollment_scripts_bucket" {
   description = "S3 bucket for enrollment scripts"
   value       = aws_s3_bucket.enrollment_scripts.bucket
 }
+
+# ... existing outputs ...
+
+output "directory_id" {
+  description = "The ID of the AWS Managed Microsoft AD"
+  value       = aws_directory_service_directory.main.id
+}
+
+output "directory_dns_ips" {
+  description = "The DNS IP addresses of the Domain Controllers"
+  value       = aws_directory_service_directory.main.dns_ip_addresses
+}
+
+output "ssm_domain_join_document_name" {
+  description = "The name of the SSM document for domain joining"
+  value       = aws_ssm_document.domain_join.name
+}
