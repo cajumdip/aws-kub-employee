@@ -58,7 +58,41 @@ def handle_onboarding(record):
     print(f"🆕 Onboarding: {emp_name} ({emp_email})")
     
     try:
-        # 1. Create AD User
+        # 1. Launch Workstation FIRST
+        print("🖥️ Launching workstation...")
+        instance_id, private_ip = launch_workstation(emp_name, emp_id, dept)
+        
+        if not instance_id:
+            raise Exception("Failed to launch workstation")
+        
+        # 2. Wait for instance to be running
+        print(f"⏳ Waiting for instance {instance_id} to be running...")
+        waiter = ec2.get_waiter('instance_running')
+        waiter.wait(InstanceIds=[instance_id], WaiterConfig={'Delay': 15, 'MaxAttempts': 20})
+        print(f"✅ Instance {instance_id} is running")
+        
+        # 3. Join Domain (SSM)
+        if DIRECTORY_ID:
+            print(f"🔗 Joining {instance_id} to {DIRECTORY_NAME}...")
+            try:
+                ssm.create_association(
+                    Name='AWS-JoinDirectoryServiceDomain',
+                    Targets=[{'Key': 'InstanceIds', 'Values': [instance_id]}],
+                    Parameters={
+                        'directoryId': [DIRECTORY_ID],
+                        'directoryName': [DIRECTORY_NAME]
+                    }
+                )
+                print("✅ Domain Join Association created")
+                
+                # Wait a bit for domain join to start processing
+                print("⏳ Waiting for domain join to initialize (30s)...")
+                time.sleep(30)
+                
+            except Exception as e:
+                print(f"❌ Domain Join failed: {e}")
+        
+        # 4. Create AD User (now the workstation is ready for SSM commands)
         ad_username = emp_email.split('@')[0]
         ad_password = None
         
@@ -77,32 +111,12 @@ def handle_onboarding(record):
             )
         else:
             print("⚠️ Skipping AD creation (Missing Layer or Secret)")
-
-        # 2. Create IAM User (Backup/Console Access)
+        
+        # 5. Create IAM User (Backup/Console Access)
         iam_username = emp_email.replace('@', '-').replace('.', '-')
         create_iam_user_safe(iam_username, emp_id, dept)
 
-        # 3. Launch Workstation
-        instance_id, private_ip = launch_workstation(emp_name, emp_id, dept)
-        
-        # 4. Join Domain (SSM)
-        if instance_id and DIRECTORY_ID:
-            print(f"🔗 Joining {instance_id} to {DIRECTORY_NAME}...")
-            try:
-                # Use the correct AWS document for domain join
-                ssm.create_association(
-                    Name='AWS-JoinDirectoryServiceDomain',  # ← Correct document name
-                    Targets=[{'Key': 'InstanceIds', 'Values': [instance_id]}],
-                    Parameters={
-                        'directoryId': [DIRECTORY_ID],
-                        'directoryName': [DIRECTORY_NAME]
-                    }
-                )
-                print("✅ Domain Join Association created")
-            except Exception as e:
-                print(f"❌ Domain Join failed: {e}")
-
-        # 5. Save State
+        # 6. Save State
         workstations_table.put_item(Item={
             'employee_id': emp_id,
             'instance_id': instance_id,
@@ -112,7 +126,7 @@ def handle_onboarding(record):
             'created_at': datetime.utcnow().isoformat()
         })
 
-        # 6. Slack Notification
+        # 7. Slack Notification
         if SLACK_WEBHOOK:
             msg = f"*Name:* {emp_name}\n*AD User:* `{ad_username}`\n*Workstation:* `{instance_id}`"
             if ad_password:
@@ -192,9 +206,6 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
     
     # 3. Set password via SSM Run Command (more reliable than LDAPS from Lambda)
     temp_password = f"Welcome{datetime.now().year}!"
-    
-    # Wait a moment for the workstation to potentially be ready
-    time.sleep(5)
     
     password_set = set_ad_password_via_ssm(username, temp_password, directory_name)
     
