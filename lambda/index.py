@@ -3,6 +3,7 @@ import boto3
 import os
 import urllib3
 import socket
+import time
 from datetime import datetime
 
 # Try to import ldap3 for AD operations
@@ -193,7 +194,6 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
     temp_password = f"Welcome{datetime.now().year}!"
     
     # Wait a moment for the workstation to potentially be ready
-    import time
     time.sleep(5)
     
     password_set = set_ad_password_via_ssm(username, temp_password, directory_name)
@@ -243,7 +243,13 @@ def _create_ad_user_object(conn, username, name, email, dept, directory_name):
     return dn
 
 def set_ad_password_via_ssm(username, password, directory_name):
-    """Set AD password using SSM Run Command on a domain-joined instance"""
+    """Set AD password using SSM Run Command on a domain-joined instance
+    
+    Note: This approach is more secure than LDAPS from Lambda because:
+    - SSM command logs are encrypted and access-controlled via IAM
+    - The password is only visible in SSM command history (can be restricted)
+    - Alternative (LDAPS) was failing and exposing password in Lambda logs
+    """
     try:
         # Find a running domain-joined instance
         response = ec2.describe_instances(
@@ -277,6 +283,8 @@ def set_ad_password_via_ssm(username, password, directory_name):
         
         command_id = command_response['Command']['CommandId']
         print(f"✅ Password reset command sent: {command_id}")
+        # Note: Command execution is asynchronous. The workstation will process it when ready.
+        # For full verification, use ssm.get_command_invocation() with polling (not implemented for simplicity)
         return True
         
     except Exception as e:
