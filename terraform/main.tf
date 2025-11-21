@@ -18,14 +18,12 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
-# Automatically zip the Lambda code
+# Automatically zip the Lambda code AND libraries
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_dir  = "${path.module}/../lambda"
+  source_dir  = "${path.module}/../lambda"      # <--- CHANGED FROM source_file
   output_path = "${path.module}/lambda_onboarding.zip"
-  
-  # Optional: Exclude junk files to keep the zip clean
-  excludes    = ["test-event.json", "output.json", "__pycache__"]
+  excludes    = ["test-event.json", "output.json", "__pycache__", "*.pyc"]
 }
 
 data "aws_caller_identity" "current" {}
@@ -862,13 +860,26 @@ resource "aws_iam_role_policy" "lambda_onboarding" {
         ]
         Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:innovatech/employee/*"
       },
+      # NEW: Added permission for AD admin secret
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = [
+          "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:innovatech/directory/admin-*",
+          "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:innovatech/employee/*"
+        ]
+      },
       {
         Effect = "Allow"
         Action = [
           "ssm:CreateActivation",
           "ssm:DeleteActivation",
           "ssm:DescribeActivations",
-          "ssm:AddTagsToResource"
+          "ssm:AddTagsToResource",
+          "ssm:CreateAssociation",
+          "ssm:DescribeAssociation"
         ]
         Resource = "*"
       },
@@ -887,6 +898,14 @@ resource "aws_iam_role_policy" "lambda_onboarding" {
           "s3:ListBucket"
         ]
         Resource = aws_s3_bucket.enrollment_scripts.arn
+      },
+      # NEW: Added Directory Service permissions
+      {
+        Effect = "Allow"
+        Action = [
+          "ds:DescribeDirectories"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -896,6 +915,54 @@ resource "aws_security_group" "lambda" {
   name        = "${var.project_name}-lambda-sg"
   description = "Security group for Lambda function"
   vpc_id      = aws_vpc.main.id
+
+  egress {
+    from_port   = 636
+    to_port     = 636
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+    description = "LDAPS to Active Directory"
+  }
+
+  egress {
+    from_port   = 389
+    to_port     = 389
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+    description = "LDAP to Active Directory"
+  }
+
+  egress {
+    from_port   = 88
+    to_port     = 88
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+    description = "Kerberos to Active Directory"
+  }
+
+  egress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow HTTPS outbound"
+  }
+
+  egress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow HTTP outbound"
+  }
+
+  egress {
+    from_port   = 53
+    to_port     = 53
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow DNS queries"
+  }
 
   egress {
     from_port   = 443
@@ -939,6 +1006,47 @@ resource "aws_secretsmanager_secret_version" "ad_password_val" {
     password = var.directory_password
   })
 }
+
+resource "aws_security_group_rule" "ad_allow_lambda_ldaps" {
+  type                     = "ingress"
+  from_port                = 636
+  to_port                  = 636
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.lambda.id
+  security_group_id        = aws_directory_service_directory.main.security_group_id
+  description              = "Allow LDAPS from Lambda"
+}
+
+resource "aws_security_group_rule" "ad_allow_lambda_ldap" {
+  type                     = "ingress"
+  from_port                = 389
+  to_port                  = 389
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.lambda.id
+  security_group_id        = aws_directory_service_directory.main.security_group_id
+  description              = "Allow LDAP from Lambda"
+}
+
+resource "aws_security_group_rule" "ad_allow_lambda_kerberos" {
+  type                     = "ingress"
+  from_port                = 88
+  to_port                  = 88
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.lambda.id
+  security_group_id        = aws_directory_service_directory.main.security_group_id
+  description              = "Allow Kerberos from Lambda"
+}
+
+resource "aws_security_group_rule" "ad_allow_lambda_dns" {
+  type                     = "ingress"
+  from_port                = 53
+  to_port                  = 53
+  protocol                 = "udp"
+  source_security_group_id = aws_security_group.lambda.id
+  security_group_id        = aws_directory_service_directory.main.security_group_id
+  description              = "Allow DNS from Lambda"
+}
+
 
 resource "aws_lambda_function" "onboarding" {
   # Use the dynamic zip file created by the data source above
