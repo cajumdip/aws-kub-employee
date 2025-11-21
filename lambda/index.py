@@ -245,10 +245,13 @@ def _create_ad_user_object(conn, username, name, email, dept, directory_name):
 def set_ad_password_via_ssm(username, password, directory_name):
     """Set AD password using SSM Run Command on a domain-joined instance
     
-    Note: This approach is more secure than LDAPS from Lambda because:
-    - SSM command logs are encrypted and access-controlled via IAM
-    - The password is only visible in SSM command history (can be restricted)
-    - Alternative (LDAPS) was failing and exposing password in Lambda logs
+    Security Notes:
+    - This approach is more secure than LDAPS from Lambda because the LDAPS method
+      was failing with SSL errors and exposing passwords in Lambda CloudWatch logs
+    - SSM command logs are encrypted at rest and access-controlled via IAM policies
+    - The password is visible in SSM command history - restrict access using IAM
+    - For production: Consider using AWS Secrets Manager references in SSM parameters
+    - MaxErrors=0 and MaxConcurrency=1 prevent multiple executions
     """
     try:
         # Find a running domain-joined instance
@@ -278,7 +281,9 @@ def set_ad_password_via_ssm(username, password, directory_name):
                     f'Enable-ADAccount -Identity "{username}"'
                 ]
             },
-            Comment=f'Set password for {username}'
+            Comment=f'Set password for {username}',
+            MaxConcurrency='1',
+            MaxErrors='0'
         )
         
         command_id = command_response['Command']['CommandId']
