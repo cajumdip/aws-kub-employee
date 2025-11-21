@@ -18,6 +18,13 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+# Automatically zip the Lambda code
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "${path.module}/../lambda/index.py"
+  output_path = "${path.module}/lambda_onboarding.zip"
+}
+
 data "aws_caller_identity" "current" {}
 
 # Find latest Windows Server AMI
@@ -536,6 +543,8 @@ resource "aws_iam_openid_connect_provider" "eks" {
   url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
 }
 
+
+
 # ===== IAM Role for Backend App (IRSA) =====
 data "aws_iam_policy_document" "backend_assume_role" {
   statement {
@@ -915,13 +924,18 @@ resource "aws_security_group" "lambda" {
 }
 
 resource "aws_lambda_function" "onboarding" {
-  filename         = "lambda_onboarding.zip"
+  # Use the dynamic zip file created by the data source above
+  filename         = data.archive_file.lambda_zip.output_path
+  
+  # This hash triggers an update whenever the content of the zip changes
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  
   function_name    = "${var.project_name}-onboarding-automation"
-  role            = aws_iam_role.lambda_onboarding.arn
-  handler         = "index.handler"
-  runtime         = "python3.11"
-  timeout         = 300
-  memory_size     = 512
+  role             = aws_iam_role.lambda_onboarding.arn
+  handler          = "index.handler"
+  runtime          = "python3.11"
+  timeout          = 300
+  memory_size      = 512
 
   vpc_config {
     subnet_ids         = aws_subnet.private[*].id
@@ -946,7 +960,8 @@ resource "aws_lambda_function" "onboarding" {
 
   depends_on = [
     aws_iam_role_policy.lambda_onboarding,
-    aws_instance.nat
+    aws_instance.nat,
+    data.archive_file.lambda_zip  # Explicit dependency
   ]
 }
 
