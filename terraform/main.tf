@@ -1047,6 +1047,16 @@ resource "aws_security_group_rule" "ad_allow_lambda_dns" {
   description              = "Allow DNS from Lambda"
 }
 
+resource "aws_security_group_rule" "ad_allow_lambda_dns_tcp" {
+  type                     = "ingress"
+  from_port                = 53
+  to_port                  = 53
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.lambda.id
+  security_group_id        = aws_directory_service_directory.main.security_group_id
+  description              = "Allow DNS TCP from Lambda"
+}
+
 
 resource "aws_lambda_function" "onboarding" {
   # Use the dynamic zip file created by the data source above

@@ -156,56 +156,53 @@ def handle_offboarding(record):
 
 # --- Helpers ---
 
+def test_directory_dns():
+    """Verify Lambda can resolve directory DNS"""
+    try:
+        import socket
+        ips = socket.gethostbyname_ex(DIRECTORY_NAME)
+        print(f"✅ DNS Resolution: {ips[2]}")
+        
+        # Test TCP connection
+        for ip in ips[2]:
+            sock = socket.create_connection((ip, 636), timeout=5)
+            sock.close()
+            print(f"✅ TCP connection to {ip}:636 successful")
+        return True
+    except Exception as e:
+        print(f"❌ Connectivity test failed: {e}")
+        return False
+
 def create_ad_user(name, username, email, dept, directory_name, secret_arn, secretsmanager):
-    """
-    Try LDAPS first (port 636), fall back to LDAP+STARTTLS (port 389)
-    """
+    """Connect to AWS Managed AD via LDAPS (port 636 only)"""
     
-    print(f"🔍 Python SSL Version: {ssl.OPENSSL_VERSION}")
-    
-    # Get Admin Creds
+    # Get admin credentials
     secret = json.loads(secretsmanager.get_secret_value(SecretId=secret_arn)['SecretString'])
     admin_user = secret['username']
     admin_pass = secret['password']
     
-    # Attempt 1: LDAPS on port 636
-    print(f"\n📍 Attempt 1: LDAPS (Port 636) to {directory_name}...")
-    try:
-        ad_password = _create_ad_user_ldaps(
-            name, username, email, dept,
-            directory_name, admin_user, admin_pass
-        )
-        print(f"✅ LDAPS connection successful!")
-        return ad_password
-    except Exception as e:
-        print(f"❌ LDAPS failed: {type(e).__name__}: {str(e)[:100]}")
-        print(f"   Falling back to LDAP+STARTTLS...\n")
+    # AWS Managed AD only supports LDAPS on port 636
+    from ldap3 import Server, Connection, NTLM, Tls
+    import ssl
     
-    # Attempt 2: LDAP + STARTTLS on port 389
-    print(f"📍 Attempt 2: LDAP+STARTTLS (Port 389) to {directory_name}...")
-    try:
-        ad_password = _create_ad_user_starttls(
-            name, username, email, dept,
-            directory_name, admin_user, admin_pass
-        )
-        print(f"✅ LDAP+STARTTLS connection successful!")
-        return ad_password
-    except Exception as e:
-        print(f"❌ LDAP+STARTTLS failed: {type(e).__name__}: {str(e)[:100]}")
+    tls_config = Tls(
+        validate=ssl.CERT_NONE,
+        version=ssl.PROTOCOL_TLS,
+        ciphers='ALL:@SECLEVEL=0'
+    )
     
-    # Attempt 3: Plain LDAP on port 389 (no TLS)
-    print(f"\n📍 Attempt 3: Plain LDAP (Port 389, no TLS) to {directory_name}...")
-    try:
-        ad_password = _create_ad_user_plain_ldap(
-            name, username, email, dept,
-            directory_name, admin_user, admin_pass
-        )
-        print(f"✅ Plain LDAP connection successful!")
-        return ad_password
-    except Exception as e:
-        print(f"❌ Plain LDAP failed: {type(e).__name__}: {str(e)[:100]}")
+    server = Server(directory_name, port=636, use_ssl=True, tls=tls_config, get_info=ALL)
+    conn = Connection(
+        server,
+        user=f"{directory_name}\\{admin_user}",
+        password=admin_pass,
+        authentication=NTLM,
+        auto_bind=True
+    )
     
-    raise Exception("All LDAP connection methods failed")
+    print(f"✅ Connected to {directory_name} via LDAPS")
+    
+    return _add_ad_user_attributes(conn, username, name, email, dept, directory_name)
 
 def _create_ad_user_ldaps(name, username, email, dept, directory_name, admin_user, admin_pass):
     """Connect via LDAPS on port 636"""
@@ -276,14 +273,12 @@ def _create_ad_user_plain_ldap(name, username, email, dept, directory_name, admi
 
 
 def _add_ad_user_attributes(conn, username, name, email, dept, directory_name):
-    """
-    Shared user creation logic after successful connection
-    """
-    from datetime import datetime
+    # Build distinguished name for AWS Managed AD
+    dc_parts = directory_name.split('.')  # ['innovatech', 'local']
+    netbios_name = dc_parts[0].upper()     # 'INNOVATECH'
     
-    # Build distinguished name
-    dc_parts = directory_name.split('.')
-    dn = f"CN={username},CN=Users,DC={dc_parts[0]},DC={dc_parts[1]}"
+    # AWS Managed AD structure: OU=INNOVATECH,DC=innovatech,DC=local
+    dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
     temp_password = f"Welcome{datetime.now().year}!"
     
     print(f"🔧 Creating AD user: CN={username}")
@@ -408,63 +403,6 @@ def diagnose_connectivity(directory_name, port=636):
     
     print("✅ All connectivity checks passed!")
     return True
-
-def handle_onboarding_updated(record, iam, ec2, secretsmanager, ssm, dynamodb, workstations_table, 
-                             slack_webhook, enrollment_bucket, aws_region, workstation_ami, 
-                             workstation_instance_type, workstation_subnet_id, workstation_sg_id, 
-                             workstation_profile_name, directory_id, directory_name, ad_secret_arn, 
-                             domain_join_doc, ldap_available):
-    
-    new_image = record['dynamodb']['NewImage']
-    emp_name = new_image['name']['S']
-    emp_email = new_image['email']['S']
-    emp_id = new_image['employee_id']['S']
-    dept = new_image['department']['S']
-    
-    print(f"🆕 Onboarding: {emp_name} ({emp_email})")
-    
-    try:
-        # 1. Create AD User with LDAPS → STARTTLS → Plain LDAP fallback
-        ad_username = emp_email.split('@')[0]
-        ad_password = None
-        
-        if ldap_available and ad_secret_arn:
-            print(f"🔌 Attempting to connect to Active Directory: {directory_name}...")
-            ad_password = create_ad_user(
-                emp_name, ad_username, emp_email, dept,
-                directory_name, ad_secret_arn, secretsmanager
-            )
-        else:
-            print("⚠️ Skipping AD creation (Missing Layer or Secret)")
-        
-        # 2. Launch Workstation
-        instance_id, private_ip = launch_workstation(emp_name, emp_id, dept, ec2, workstation_ami, 
-                                                     workstation_instance_type, workstation_subnet_id, 
-                                                     workstation_sg_id, workstation_profile_name, directory_name)
-        
-        # 3. Join Domain (SSM)
-        if instance_id and domain_join_doc:
-            print(f"🖥️ Joining {instance_id} to {directory_name}...")
-            # Domain join logic...
-        
-        # 4. Save State & Notify
-        workstations_table.put_item(Item={
-            'employee_id': emp_id,
-            'instance_id': instance_id,
-            'ad_username': f"{directory_name}\\{ad_username}",
-            'status': 'provisioning',
-            'created_at': datetime.utcnow().isoformat()
-        })
-        
-        if slack_webhook:
-            msg = f"*Name:* {emp_name}\n*AD User:* `{ad_username}`\n*Workstation:* `{instance_id}`"
-            if ad_password:
-                msg += f"\n*Initial Password:* ||{ad_password}||"
-            send_slack("🎉 Enterprise Onboarding Complete", msg, slack_webhook)
-        
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        raise e
 
 def send_slack(title, text):
     payload = {"text": title, "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]}
