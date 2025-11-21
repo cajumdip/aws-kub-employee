@@ -21,8 +21,11 @@ data "aws_availability_zones" "available" {
 # Automatically zip the Lambda code
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_file = "${path.module}/../lambda/index.py"
+  source_dir  = "${path.module}/../lambda"
   output_path = "${path.module}/lambda_onboarding.zip"
+  
+  # Optional: Exclude junk files to keep the zip clean
+  excludes    = ["test-event.json", "output.json", "__pycache__"]
 }
 
 data "aws_caller_identity" "current" {}

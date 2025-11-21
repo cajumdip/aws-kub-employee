@@ -1,1 +1,0 @@
-{"errorMessage": "'eventName'", "errorType": "KeyError", "requestId": "05466d38-db77-46d0-a6b1-c197efbeefe0", "stackTrace": ["  File \"/var/task/index.py\", line 28, in handler\n    if record['eventName'] != 'INSERT':\n"]}
