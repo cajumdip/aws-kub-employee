@@ -1,16 +1,14 @@
 import json
 import boto3
 import os
-import time
 import urllib3
-import ssl  # <--- ADD THIS
+import ssl
 import socket
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Try to import ldap3 for AD operations
 try:
-    # ADD 'Tls' to the import list below
-    from ldap3 import Server, Connection, ALL, NTLM, SUBTREE, Tls 
+    from ldap3 import Server, Connection, ALL, NTLM, Tls
     LDAP_AVAILABLE = True
 except ImportError:
     LDAP_AVAILABLE = False
@@ -20,15 +18,12 @@ except ImportError:
 iam = boto3.client('iam')
 ec2 = boto3.client('ec2')
 secretsmanager = boto3.client('secretsmanager')
-s3 = boto3.client('s3')
 ssm = boto3.client('ssm')
 dynamodb = boto3.resource('dynamodb')
 http = urllib3.PoolManager()
 
 # Configuration
 SLACK_WEBHOOK = os.environ.get('SLACK_WEBHOOK_URL')
-ENROLLMENT_BUCKET = os.environ.get('ENROLLMENT_BUCKET')
-AWS_REGION = os.environ.get('INNOVATECH_REGION', 'eu-central-1')
 WORKSTATIONS_TABLE = os.environ.get('WORKSTATIONS_TABLE')
 WORKSTATION_AMI = os.environ.get('WORKSTATION_AMI')
 WORKSTATION_INSTANCE_TYPE = os.environ.get('WORKSTATION_INSTANCE_TYPE', 't3.medium')
@@ -63,38 +58,36 @@ def handle_onboarding(record):
     print(f"🆕 Onboarding: {emp_name} ({emp_email})")
     
     try:
-        # 1. Create AD User (if ldap3 is available)
+        # 1. Create AD User
         ad_username = emp_email.split('@')[0]
         ad_password = None
         
         if LDAP_AVAILABLE and AD_SECRET_ARN:
+            print("🩺 Running connectivity diagnostics...")
+            diagnose_connectivity(DIRECTORY_NAME)
+            
             print(f"🔌 Connecting to Active Directory: {DIRECTORY_NAME}...")
-            # --- FIX BELOW: Added DIRECTORY_NAME, AD_SECRET_ARN, and secretsmanager ---
             ad_password = create_ad_user(
                 emp_name, 
                 ad_username, 
                 emp_email, 
                 dept, 
                 DIRECTORY_NAME, 
-                AD_SECRET_ARN, 
-                secretsmanager
+                AD_SECRET_ARN
             )
         else:
             print("⚠️ Skipping AD creation (Missing Layer or Secret)")
 
         # 2. Create IAM User (Backup/Console Access)
-        # We keep this for now to ensure your existing login flows don't break immediately
         iam_username = emp_email.replace('@', '-').replace('.', '-')
         create_iam_user_safe(iam_username, emp_id, dept)
 
-        # 3. Launch & Domain Join Workstation
+        # 3. Launch Workstation
         instance_id, private_ip = launch_workstation(emp_name, emp_id, dept)
         
         # 4. Join Domain (SSM)
         if instance_id and DOMAIN_JOIN_DOC:
             print(f"🔗 Joining {instance_id} to {DIRECTORY_NAME}...")
-            # We wait a bit for SSM agent to come up (in real prod, use lifecycle hooks)
-            # Creating association forces the join command
             try:
                 ssm.create_association(
                     Name=DOMAIN_JOIN_DOC,
@@ -146,144 +139,82 @@ def handle_offboarding(record):
                 ec2.terminate_instances(InstanceIds=[instance_id])
             workstations_table.delete_item(Key={'employee_id': emp_id})
             
-        # TODO: Add AD User Disable logic here when ldap3 is ready
-        
         if SLACK_WEBHOOK:
             send_slack("👋 Employee Offboarded", f"Resources for {emp_name} have been cleaned up.")
             
     except Exception as e:
         print(f"❌ Error offboarding: {e}")
 
-# --- Helpers ---
+# --- Active Directory Helpers ---
 
-def test_directory_dns():
-    """Verify Lambda can resolve directory DNS"""
-    try:
-        import socket
-        ips = socket.gethostbyname_ex(DIRECTORY_NAME)
-        print(f"✅ DNS Resolution: {ips[2]}")
-        
-        # Test TCP connection
-        for ip in ips[2]:
-            sock = socket.create_connection((ip, 636), timeout=5)
-            sock.close()
-            print(f"✅ TCP connection to {ip}:636 successful")
-        return True
-    except Exception as e:
-        print(f"❌ Connectivity test failed: {e}")
-        return False
-
-def create_ad_user(name, username, email, dept, directory_name, secret_arn, secretsmanager):
-    """Connect to AWS Managed AD via LDAPS (port 636 only)"""
+def create_ad_user(name, username, email, dept, directory_name, secret_arn):
+    """
+    Creates a user in AWS Managed AD.
+    """
     
-    # Get admin credentials
-    secret = json.loads(secretsmanager.get_secret_value(SecretId=secret_arn)['SecretString'])
+    # 1. Retrieve Credentials
+    secret_val = secretsmanager.get_secret_value(SecretId=secret_arn)['SecretString']
+    secret = json.loads(secret_val)
     admin_user = secret['username']
     admin_pass = secret['password']
     
-    # AWS Managed AD only supports LDAPS on port 636
-    from ldap3 import Server, Connection, NTLM, Tls
-    import ssl
-    
+    # 2. Resolve Domain to IPs (Crucial to avoid SNI errors)
+    try:
+        ip_list = socket.gethostbyname_ex(directory_name)[2]
+        print(f"ℹ️ Resolved {directory_name} to {ip_list}")
+    except Exception as e:
+        print(f"❌ DNS resolution failed, attempting to connect using name directly: {e}")
+        ip_list = [directory_name]
+
+    # 3. Configure TLS with Weak Ciphers
+    # We do NOT pass 'context' here as it causes TypeError in this version of ldap3.
+    # We use 'ciphers' string to tell OpenSSL to be permissive.
     tls_config = Tls(
         validate=ssl.CERT_NONE,
-        version=ssl.PROTOCOL_TLS,
-        ciphers='ALL:@SECLEVEL=0'
+        version=ssl.PROTOCOL_TLSv1_2,
+        ciphers='ALL:@SECLEVEL=0' 
     )
-    
-    server = Server(directory_name, port=636, use_ssl=True, tls=tls_config, get_info=ALL)
-    conn = Connection(
-        server,
-        user=f"{directory_name}\\{admin_user}",
-        password=admin_pass,
-        authentication=NTLM,
-        auto_bind=True
-    )
-    
-    print(f"✅ Connected to {directory_name} via LDAPS")
-    
-    return _add_ad_user_attributes(conn, username, name, email, dept, directory_name)
 
-def _create_ad_user_ldaps(name, username, email, dept, directory_name, admin_user, admin_pass):
-    """Connect via LDAPS on port 636"""
-    from ldap3 import Server, Connection, NTLM, Tls
-    import ssl
-    
-    # Configure TLS for LDAPS
-    tls_config = Tls(
-        validate=ssl.CERT_NONE,
-        version=ssl.PROTOCOL_TLS,
-        ciphers='ALL:@SECLEVEL=0'
-    )
-    
-    server = Server(directory_name, port=636, use_ssl=True, tls=tls_config)
-    conn = Connection(
-        server,
-        user=f"{directory_name}\\{admin_user}",
-        password=admin_pass,
-        authentication=NTLM,
-        auto_bind=True
-    )
-    
-    return _add_ad_user_attributes(conn, username, name, email, dept, directory_name)
+    last_error = None
 
-def _create_ad_user_starttls(name, username, email, dept, directory_name, admin_user, admin_pass):
-    """Connect via LDAP+STARTTLS on port 389"""
-    from ldap3 import Server, Connection, NTLM, Tls
-    import ssl
-    
-    # Configure TLS for STARTTLS
-    tls_config = Tls(
-        validate=ssl.CERT_NONE,
-        version=ssl.PROTOCOL_TLS,
-        ciphers='ALL:@SECLEVEL=0'
-    )
-    
-    server = Server(directory_name, port=389, use_ssl=False, tls=tls_config)
-    conn = Connection(
-        server,
-        user=f"{directory_name}\\{admin_user}",
-        password=admin_pass,
-        authentication=NTLM,
-        auto_bind=False  # Don't auto-bind yet
-    )
-    
-    # Open connection and upgrade to TLS
-    conn.open()
-    conn.start_tls()
-    conn.bind()
-    
-    return _add_ad_user_attributes(conn, username, name, email, dept, directory_name)
+    # 4. Connect using IP Address (Bypasses hostname/SNI checks)
+    for ad_ip in ip_list:
+        print(f"🛡️ Connecting to {ad_ip} (IP-based connection)...")
+        try:
+            # Passing IP as the host prevents the library from sending the Domain Name in SNI
+            server = Server(ad_ip, port=636, use_ssl=True, tls=tls_config)
+            
+            conn = Connection(
+                server,
+                user=f"{directory_name}\\{admin_user}",
+                password=admin_pass,
+                authentication=NTLM,
+                auto_bind=True,
+                receive_timeout=10
+            )
+            
+            print(f"✅ Connected successfully to {ad_ip}!")
+            return _perform_ad_operations(conn, username, name, email, dept, directory_name)
+            
+        except Exception as e:
+            print(f"❌ Failed to connect to {ad_ip}: {e}")
+            last_error = e
+            
+    raise last_error
 
-
-def _create_ad_user_plain_ldap(name, username, email, dept, directory_name, admin_user, admin_pass):
-    """Connect via plain LDAP on port 389 (no TLS)"""
-    from ldap3 import Server, Connection, NTLM
+def _perform_ad_operations(conn, username, name, email, dept, directory_name):
+    """Internal helper to actually create the user once connected"""
+    import base64
     
-    server = Server(directory_name, port=389, use_ssl=False)
-    conn = Connection(
-        server,
-        user=f"{directory_name}\\{admin_user}",
-        password=admin_pass,
-        authentication=NTLM,
-        auto_bind=True
-    )
-    
-    return _add_ad_user_attributes(conn, username, name, email, dept, directory_name)
-
-
-def _add_ad_user_attributes(conn, username, name, email, dept, directory_name):
-    # Build distinguished name for AWS Managed AD
-    dc_parts = directory_name.split('.')  # ['innovatech', 'local']
-    netbios_name = dc_parts[0].upper()     # 'INNOVATECH'
-    
-    # AWS Managed AD structure: OU=INNOVATECH,DC=innovatech,DC=local
+    # Determine correct OU
+    dc_parts = directory_name.split('.')
+    netbios_name = dc_parts[0].upper()
     dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
+    
     temp_password = f"Welcome{datetime.now().year}!"
+    print(f"🔧 Creating AD Object: {dn}")
     
-    print(f"🔧 Creating AD user: CN={username}")
-    
-    # Add user object
+    # Create User Object
     conn.add(dn, attributes={
         'objectClass': ['top', 'person', 'organizationalPerson', 'user'],
         'cn': username,
@@ -293,67 +224,64 @@ def _add_ad_user_attributes(conn, username, name, email, dept, directory_name):
         'sn': name.split()[-1] if ' ' in name else name,
         'displayName': name,
         'department': dept,
-        'userAccountControl': 512  # Normal Account
+        'userAccountControl': 512
     })
     
     if conn.result['result'] != 0:
-        raise Exception(f"User creation failed: {conn.result}")
+        if conn.result['result'] == 68: # User exists
+            print(f"⚠️ User {username} already exists. Updating password only.")
+        else:
+            raise Exception(f"User creation failed: {conn.result}")
+    else:
+        print(f"✅ User object created")
     
-    print(f"✅ User object created")
-    
-    # Set password
+    # Set Password
     try:
-        conn.extend.microsoft.modify_password(dn, temp_password)
-        print(f"✅ Password set")
-    except Exception as e:
-        print(f"⚠️ Password set via Microsoft extension failed: {e}")
-        print(f"   Trying alternative method...")
-        # Alternative: use modify with unicodePwd
-        import base64
         pwd_value = f'"{temp_password}"'.encode('utf-16-le')
-        conn.modify(dn, {'unicodePwd': [(('MODIFY_REPLACE', [base64.b64encode(pwd_value).decode()]))]}  )
+        conn.modify(dn, {'unicodePwd': [('MODIFY_REPLACE', [base64.b64encode(pwd_value).decode()])]})
+        print(f"✅ Password set successfully")
+    except Exception as e:
+        print(f"❌ Failed to set password: {e}")
+        raise e
     
-    # Enable account
+    # Ensure Enabled
     conn.modify(dn, {'userAccountControl': [('MODIFY_REPLACE', [512])]})
-    print(f"✅ Account enabled")
+    conn.unbind()
     
-    # Clean up
-    try:
-        conn.unbind()
-    except:
-        pass
-    
-    print(f"✅ AD User created successfully: {username}")
     return temp_password
+
+# --- Infrastructure Helpers ---
 
 def launch_workstation(name, emp_id, dept):
     user_data = f"""<powershell>
-    # Set Hostname to match AD standards
     Rename-Computer -NewName "WS-{emp_id[:8]}" -Force
     </powershell>
     """
-    
-    run_instances = ec2.run_instances(
-        ImageId=WORKSTATION_AMI,
-        InstanceType=WORKSTATION_INSTANCE_TYPE,
-        MinCount=1, MaxCount=1,
-        SubnetId=WORKSTATION_SUBNET_ID,
-        SecurityGroupIds=[WORKSTATION_SG_ID],
-        IamInstanceProfile={'Name': WORKSTATION_PROFILE_NAME},
-        UserData=user_data,
-        TagSpecifications=[{
-            'ResourceType': 'instance',
-            'Tags': [
-                {'Key': 'Name', 'Value': f"{name}-Workstation"},
-                {'Key': 'EmployeeId', 'Value': emp_id},
-                {'Key': 'Domain', 'Value': DIRECTORY_NAME}
-            ]
-        }]
-    )
-    return run_instances['Instances'][0]['InstanceId'], run_instances['Instances'][0].get('PrivateIpAddress')
+    try:
+        run_instances = ec2.run_instances(
+            ImageId=WORKSTATION_AMI,
+            InstanceType=WORKSTATION_INSTANCE_TYPE,
+            MinCount=1, MaxCount=1,
+            SubnetId=WORKSTATION_SUBNET_ID,
+            SecurityGroupIds=[WORKSTATION_SG_ID],
+            IamInstanceProfile={'Name': WORKSTATION_PROFILE_NAME},
+            UserData=user_data,
+            TagSpecifications=[{
+                'ResourceType': 'instance',
+                'Tags': [
+                    {'Key': 'Name', 'Value': f"{name}-Workstation"},
+                    {'Key': 'EmployeeId', 'Value': emp_id},
+                    {'Key': 'Domain', 'Value': DIRECTORY_NAME}
+                ]
+            }]
+        )
+        inst = run_instances['Instances'][0]
+        return inst['InstanceId'], inst.get('PrivateIpAddress')
+    except Exception as e:
+        print(f"❌ Failed to launch EC2: {e}")
+        return None, None
 
 def get_directory_ips():
-    # Find the directory IPs dynamically
     dirs = boto3.client('ds').describe_directories(DirectoryIds=[DIRECTORY_ID])
     return dirs['DirectoryDescriptions'][0]['DnsIpAddrs']
 
@@ -364,44 +292,22 @@ def create_iam_user_safe(username, emp_id, dept):
         pass
 
 def diagnose_connectivity(directory_name, port=636):
-    """Run before attempting LDAP connection"""
     print(f"🔍 Diagnosing connection to {directory_name}:{port}...")
-    
-    # Test 1: DNS Resolution
     try:
         resolved_ips = socket.gethostbyname_ex(directory_name)
         print(f"✅ DNS Resolution OK: {resolved_ips[2]}")
+        ips = resolved_ips[2]
     except socket.gaierror as e:
         print(f"❌ DNS Resolution FAILED: {e}")
-        print("   → Fix: Ensure Lambda is in VPC with proper DNS config")
         return False
     
-    # Test 2: TCP Connection (without SSL)
-    for ip in resolved_ips[2]:
+    for ip in ips:
         try:
-            sock = socket.create_connection((ip, port), timeout=5)
+            sock = socket.create_connection((ip, port), timeout=3)
             sock.close()
-            print(f"✅ TCP Connection to {ip}:{port} OK")
+            print(f"✅ TCP Reachable: {ip}:{port}")
         except Exception as e:
-            print(f"❌ TCP Connection to {ip}:{port} FAILED: {e}")
-            print("   → Fix: Check security groups and network ACLs")
-            return False
-    
-    # Test 3: SSL Handshake
-    try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        
-        with socket.create_connection((directory_name, port), timeout=5) as sock:
-            with context.wrap_socket(sock, server_hostname=directory_name) as ssock:
-                print(f"✅ SSL Handshake OK: {ssock.version}")
-    except Exception as e:
-        print(f"❌ SSL Handshake FAILED: {e}")
-        print("   → Fix: Check LDAPS certificate/port configuration")
-        return False
-    
-    print("✅ All connectivity checks passed!")
+            print(f"❌ TCP Unreachable {ip}:{port} - {e}")
     return True
 
 def send_slack(title, text):
