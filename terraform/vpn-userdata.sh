@@ -93,8 +93,8 @@ for conf in /etc/wireguard/clients/client*.conf; do
   if [ -f "$conf" ]; then
     sed -i "s|VPN_PUBLIC_IP_PLACEHOLDER|$PUBLIC_IP|g" "$conf"
     # Regenerate QR code
-    base_name="${conf%.conf}"
-    qrencode -t ansiutf8 < "$conf" > "${base_name}-qr.txt"
+    base_name="$${conf%.conf}"
+    qrencode -t ansiutf8 < "$conf" > "$${base_name}-qr.txt"
   fi
 done
 

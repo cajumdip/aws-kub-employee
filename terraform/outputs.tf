@@ -112,21 +112,11 @@ output "vpn_client_config_location" {
 
 output "vpn_setup_commands" {
   description = "Commands to retrieve VPN client configurations"
-  value       = var.enable_vpn ? <<-EOT
-    # SSH into the VPN server:
-    ssh ubuntu@${aws_eip.vpn[0].public_ip}
-    
-    # Update client configs with the public IP (run once after deployment):
-    sudo /usr/local/bin/update-vpn-configs.sh ${aws_eip.vpn[0].public_ip}
-    
-    # View client configurations:
-    sudo cat /etc/wireguard/clients/client1.conf
-    
-    # View QR code for mobile clients:
-    sudo cat /etc/wireguard/clients/client1-qr.txt
-    
-    # Check WireGuard status:
-    sudo wg show
-  EOT
-  : "VPN not enabled"
+  value = var.enable_vpn ? "ssh ubuntu@${aws_eip.vpn[0].public_ip} and run: sudo cat /etc/wireguard/clients/client1.conf" : "VPN not enabled"
+}
+
+output "vpn_ssh_key_path" {
+  description = "Path to VPN SSH private key"
+  value       = var.enable_vpn ? abspath(local_file.vpn_private_key[0].filename) : "VPN not enabled"
+  sensitive   = true
 }

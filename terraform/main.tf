@@ -265,6 +265,7 @@ resource "aws_instance" "vpn" {
   count                       = var.enable_vpn ? 1 : 0
   ami                         = data.aws_ami.ubuntu_arm64.id
   instance_type              = var.vpn_instance_type
+  key_name                   = aws_key_pair.vpn[0].key_name
   subnet_id                  = aws_subnet.public[0].id
   vpc_security_group_ids     = [aws_security_group.vpn[0].id]
   associate_public_ip_address = true
@@ -272,8 +273,8 @@ resource "aws_instance" "vpn" {
 
   user_data = templatefile("${path.module}/vpn-userdata.sh", {
     vpn_client_count = var.vpn_client_count
-    dns_ip_1         = aws_directory_service_directory.main.dns_ip_addresses[0]
-    dns_ip_2         = aws_directory_service_directory.main.dns_ip_addresses[1]
+    dns_ip_1         = tolist(aws_directory_service_directory.main.dns_ip_addresses)[0]
+    dns_ip_2         = tolist(aws_directory_service_directory.main.dns_ip_addresses)[1]
   })
 
   tags = {
@@ -281,6 +282,26 @@ resource "aws_instance" "vpn" {
   }
 
   depends_on = [aws_internet_gateway.main, aws_directory_service_directory.main]
+}
+
+resource "tls_private_key" "vpn_ssh" {
+  count     = var.enable_vpn ? 1 : 0
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+resource "aws_key_pair" "vpn" {
+  count      = var.enable_vpn ? 1 : 0
+  key_name   = "${var.project_name}-vpn-key"
+  public_key = tls_private_key.vpn_ssh[0].public_key_openssh
+}
+
+# Save private key locally
+resource "local_file" "vpn_private_key" {
+  count           = var.enable_vpn ? 1 : 0
+  content         = tls_private_key.vpn_ssh[0].private_key_pem
+  filename        = "${path.module}/vpn-key.pem"
+  file_permission = "0600"
 }
 
 resource "aws_eip_association" "vpn" {
