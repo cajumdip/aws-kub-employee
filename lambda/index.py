@@ -222,24 +222,47 @@ def handle_offboarding(record):
                 
                 # Check for and delete any lingering network interfaces
                 try:
+                    # Small delay to allow AWS to begin cleanup
+                    time.sleep(3)
+                    
                     # Get instance details to find network interfaces
                     instance_details = ec2.describe_instances(InstanceIds=[instance_id])
                     for reservation in instance_details['Reservations']:
                         for instance in reservation['Instances']:
                             for eni in instance.get('NetworkInterfaces', []):
                                 eni_id = eni.get('NetworkInterfaceId')
-                                if eni_id:
-                                    # Wait a bit for AWS to clean up
-                                    time.sleep(5)
-                                    try:
-                                        ec2.delete_network_interface(NetworkInterfaceId=eni_id)
-                                        print(f"   ✓ Deleted network interface: {eni_id}")
-                                        cleanup_actions.append(f"Deleted network interface: {eni_id}")
-                                    except Exception as eni_error:
-                                        # Network interface might already be deleted by AWS
-                                        print(f"   ℹ️ Network interface cleanup: {eni_error}")
+                                if eni_id and not eni.get('Attachment', {}).get('DeleteOnTermination', True):
+                                    # Wait for ENI to be available for deletion with exponential backoff
+                                    max_retries = 5
+                                    retry_delay = 2
+                                    for attempt in range(max_retries):
+                                        try:
+                                            # Check ENI status
+                                            eni_desc = ec2.describe_network_interfaces(NetworkInterfaceIds=[eni_id])
+                                            eni_status = eni_desc['NetworkInterfaces'][0]['Status']
+                                            
+                                            if eni_status == 'available':
+                                                ec2.delete_network_interface(NetworkInterfaceId=eni_id)
+                                                print(f"   ✓ Deleted network interface: {eni_id}")
+                                                cleanup_actions.append(f"Deleted network interface: {eni_id}")
+                                                break
+                                            else:
+                                                print(f"   ⏳ ENI {eni_id} status: {eni_status}, waiting...")
+                                                time.sleep(retry_delay)
+                                                retry_delay *= 2  # Exponential backoff
+                                        except ec2.exceptions.ClientError as e:
+                                            if e.response['Error']['Code'] == 'InvalidNetworkInterfaceID.NotFound':
+                                                print(f"   ✓ Network interface {eni_id} already deleted")
+                                                break
+                                            elif attempt < max_retries - 1:
+                                                print(f"   ⏳ ENI cleanup retry {attempt + 1}/{max_retries}")
+                                                time.sleep(retry_delay)
+                                                retry_delay *= 2
+                                            else:
+                                                raise
                 except Exception as e:
-                    print(f"   ⚠️ Network interface cleanup check: {e}")
+                    # Non-critical error - ENI might be auto-deleted by AWS
+                    print(f"   ℹ️ Network interface cleanup: {e}")
                     
             except Exception as e:
                 error_msg = f"Failed to terminate instance {instance_id}: {str(e)}"

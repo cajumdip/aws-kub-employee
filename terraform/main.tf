@@ -364,7 +364,8 @@ resource "aws_instance" "vpn" {
                 if [ -f "$conf" ]; then
                   sed -i "s|VPN_PUBLIC_IP_PLACEHOLDER|$PUBLIC_IP|g" "$conf"
                   # Regenerate QR code
-                  qrencode -t ansiutf8 < "$conf" > "$${conf%.conf}-qr.txt"
+                  base_name="${conf%.conf}"
+                  qrencode -t ansiutf8 < "$conf" > "${base_name}-qr.txt"
                 fi
               done
               
@@ -372,10 +373,6 @@ resource "aws_instance" "vpn" {
               UPDATESCRIPT
               
               chmod +x /usr/local/bin/update-vpn-configs.sh
-              
-              # Install CloudWatch agent for monitoring
-              wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb
-              dpkg -i -E ./amazon-cloudwatch-agent.deb
               
               echo "VPN setup complete. Server public key: $SERVER_PUBLIC_KEY"
               EOF
