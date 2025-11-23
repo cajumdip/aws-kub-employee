@@ -277,22 +277,22 @@ def handle_offboarding(record):
                                                 raise
                 except Exception as e:
                     # Non-critical error - ENI might be auto-deleted by AWS
-                    print(f"   ℹ️ Network interface cleanup: {e}")
+                    print(f"   Network interface cleanup: {e}")
                     
             except Exception as e:
                 error_msg = f"Failed to terminate instance {instance_id}: {str(e)}"
-                print(f"   ❌ {error_msg}")
+                print(f"   {error_msg}")
                 errors.append(error_msg)
         
         # 4. Remove from workstations table (only after successful termination)
         if workstation_data:
             try:
                 workstations_table.delete_item(Key={'employee_id': emp_id})
-                print(f"   ✅ Removed from workstations table")
+                print(f"   Removed from workstations table")
                 cleanup_actions.append("Removed workstation record from database")
             except Exception as e:
                 error_msg = f"Failed to remove from workstations table: {str(e)}"
-                print(f"   ❌ {error_msg}")
+                print(f"{error_msg}")
                 errors.append(error_msg)
         
         # 5. Send comprehensive Slack notification
@@ -311,7 +311,7 @@ def handle_offboarding(record):
             if errors:
                 message += f"\n\n*Errors:*"
                 for error in errors:
-                    message += f"\n❌ {error}"
+                    message += f"\n{error}"
             
             send_slack(f"{status_emoji} Employee Offboarding {status_text}", message)
         
@@ -320,9 +320,9 @@ def handle_offboarding(record):
         
     except Exception as e:
         error_msg = f"Critical error during offboarding: {str(e)}"
-        print(f"❌ {error_msg}")
+        print(f"{error_msg}")
         if SLACK_WEBHOOK:
-            send_slack("🚨 Offboarding Failed", f"*Employee:* {emp_name}\n*Error:* {error_msg}")
+            send_slack("Offboarding Failed", f"*Employee:* {emp_name}\n*Error:* {error_msg}")
         raise e
 
 # --- Active Directory Helpers ---
@@ -339,11 +339,11 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
     admin_user = secret['username']
     admin_pass = secret['password']
     
-    print(f"🔌 Connecting to Active Directory: {directory_name}...")
+    print(f"Connecting to Active Directory: {directory_name}...")
     
     # 2. Create user on port 389 (unencrypted for user object creation)
     try:
-        print(f"🛡️ Connecting to {directory_name}:389 for user creation...")
+        print(f"Connecting to {directory_name}:389 for user creation...")
         server_389 = Server(
             directory_name,
             port=389,
@@ -360,14 +360,14 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
             receive_timeout=10
         )
         
-        print(f"✅ Connected on port 389")
+        print(f"Connected on port 389")
         
         # Create the user (without password)
         user_dn = _create_ad_user_object(conn_389, username, name, email, dept, directory_name)
         conn_389.unbind()
         
     except Exception as e:
-        print(f"❌ Failed to create user object: {e}")
+        print(f"Failed to create user object: {e}")
         raise e
     
     # 3. Set password via SSM Run Command (more reliable than LDAPS from Lambda)
@@ -386,7 +386,7 @@ def _create_ad_user_object(conn, username, name, email, dept, directory_name):
     # AWS Managed AD: Use the delegated OU
     dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
     
-    print(f"🔧 Creating AD Object: {dn}")
+    print(f"Creating AD Object: {dn}")
     
     # Split name properly
     name_parts = name.strip().split()
@@ -407,9 +407,9 @@ def _create_ad_user_object(conn, username, name, email, dept, directory_name):
     })
     
     if conn.result['result'] == 0:
-        print(f"✅ User object created")
+        print(f"User object created")
     elif conn.result['result'] == 68:
-        print(f"⚠️ User {username} already exists")
+        print(f"User {username} already exists")
     else:
         raise Exception(f"User creation failed: {conn.result['description']}")
     
@@ -446,29 +446,29 @@ def delete_ad_user(username, directory_name, secret_arn):
             receive_timeout=10
         )
         
-        print(f"✅ Connected to AD on port 389")
+        print(f"Connected to AD on port 389")
         
         # Build user DN
         dc_parts = directory_name.split('.')
         netbios_name = dc_parts[0].upper()
         user_dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
         
-        print(f"🔧 Deleting AD user: {user_dn}")
+        print(f"Deleting AD user: {user_dn}")
         
         # Delete the user
         conn.delete(user_dn)
         
         if conn.result['result'] == 0:
-            print(f"✅ AD user deleted successfully")
+            print(f"AD user deleted successfully")
         elif conn.result['result'] == 32:
-            print(f"⚠️ AD user not found: {username}")
+            print(f"AD user not found: {username}")
         else:
             raise Exception(f"User deletion failed: {conn.result['description']}")
         
         conn.unbind()
         
     except Exception as e:
-        print(f"❌ Failed to delete AD user: {e}")
+        print(f"Failed to delete AD user: {e}")
         raise e
 
 
@@ -489,11 +489,16 @@ def launch_workstation(name, emp_id, dept):
     timestamp_suffix = str(int(time.time()))[-4:]  # Last 4 digits of timestamp
     computer_name = f"WS-{emp_id.replace('-', '')[:7]}{timestamp_suffix}"[:15]
     
+    # *** FIX: Get actual domain controller IPs dynamically ***
+    dc_ips = get_directory_ips()
+    dc_ip_1 = dc_ips[0] if len(dc_ips) > 0 else "10.0.10.78"
+    dc_ip_2 = dc_ips[1] if len(dc_ips) > 1 else "10.0.11.216"
+    
     # User Data with PowerShell domain join
     user_data = f"""<powershell>
 # Configure DNS to use domain controllers
 $adapter = Get-NetAdapter | Where-Object {{$_.Status -eq "Up"}} | Select-Object -First 1
-Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("10.0.10.225", "10.0.11.177")
+Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("{dc_ip_1}", "{dc_ip_2}")
 
 # Rename computer
 Rename-Computer -NewName "{computer_name}" -Force
@@ -526,13 +531,22 @@ while (-not $success -and $retryCount -lt $maxRetries) {{
 }}
 
 # Reboot if domain join succeeded
+# Reboot if domain join succeeded
 if ($success) {{
     Write-Host "Rebooting to complete domain join..."
     Restart-Computer -Force
 }}
 
-# Wait for reboot and set password (runs after reboot due to persist tag)
+# Wait for reboot and complete post-domain-join tasks
 Start-Sleep -Seconds 180
+
+# Grant RDP permissions to domain users
+try {{
+    Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Domain Users" -ErrorAction Stop
+    Write-Host "Granted RDP access to Domain Users"
+}} catch {{
+    Write-Host "RDP permission may already exist: $_"
+}}
 
 Import-Module ActiveDirectory -ErrorAction SilentlyContinue
 
@@ -579,7 +593,7 @@ while (-not $success -and $retryCount -lt 10) {{
         inst = run_instances['Instances'][0]
         return inst['InstanceId'], inst.get('PrivateIpAddress')
     except Exception as e:
-        print(f"❌ Failed to launch EC2: {e}")
+        print(f"Failed to launch EC2: {e}")
         return None, None
 
 def get_directory_ips():
@@ -593,22 +607,22 @@ def create_iam_user_safe(username, emp_id, dept):
         pass
 
 def diagnose_connectivity(directory_name, port=636):
-    print(f"🔍 Diagnosing connection to {directory_name}:{port}...")
+    print(f"Diagnosing connection to {directory_name}:{port}...")
     try:
         resolved_ips = socket.gethostbyname_ex(directory_name)
-        print(f"✅ DNS Resolution OK: {resolved_ips[2]}")
+        print(f"DNS Resolution OK: {resolved_ips[2]}")
         ips = resolved_ips[2]
     except socket.gaierror as e:
-        print(f"❌ DNS Resolution FAILED: {e}")
+        print(f"DNS Resolution FAILED: {e}")
         return False
     
     for ip in ips:
         try:
             sock = socket.create_connection((ip, port), timeout=3)
             sock.close()
-            print(f"✅ TCP Reachable: {ip}:{port}")
+            print(f"TCP Reachable: {ip}:{port}")
         except Exception as e:
-            print(f"❌ TCP Unreachable {ip}:{port} - {e}")
+            print(f"TCP Unreachable {ip}:{port} - {e}")
     return True
 
 def send_slack(title, text):
