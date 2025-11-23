@@ -8,9 +8,9 @@ apt-get upgrade -y
 # Install WireGuard
 apt-get install -y wireguard qrencode
 
-# Enable IP forwarding
-echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
-echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
+# Enable IP forwarding (idempotent)
+grep -q "net.ipv4.ip_forward=1" /etc/sysctl.conf || echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+grep -q "net.ipv6.conf.all.forwarding=1" /etc/sysctl.conf || echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
 sysctl -p
 
 # Generate server keys
@@ -44,37 +44,29 @@ mkdir -p /etc/wireguard/clients
 for i in {1..${vpn_client_count}}; do
   CLIENT_PRIVATE_KEY=$(wg genkey)
   CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
+  CLIENT_IP=$((i+1))
   
-  # Add client to server config
-  cat >> /etc/wireguard/wg0.conf <<'PEER'
+  # Add client to server config directly
+  cat >> /etc/wireguard/wg0.conf <<PEER
 
 [Peer]
-PublicKey = CLIENT_PUBLIC_KEY_PLACEHOLDER
-AllowedIPs = 10.200.200.CLIENT_IP_PLACEHOLDER/32
+PublicKey = $CLIENT_PUBLIC_KEY
+AllowedIPs = 10.200.200.$CLIENT_IP/32
 PEER
   
-  # Replace placeholders in server config
-  sed -i "s|CLIENT_PUBLIC_KEY_PLACEHOLDER|$CLIENT_PUBLIC_KEY|g" /etc/wireguard/wg0.conf
-  sed -i "s|CLIENT_IP_PLACEHOLDER|$((i+1))|g" /etc/wireguard/wg0.conf
-  
-  # Create client config
-  cat > /etc/wireguard/clients/client$i.conf <<'CLIENT'
+  # Create client config directly with variables
+  cat > /etc/wireguard/clients/client$i.conf <<CLIENT
 [Interface]
-PrivateKey = CLIENT_PRIVATE_KEY_PLACEHOLDER
-Address = 10.200.200.CLIENT_IP_PLACEHOLDER/24
+PrivateKey = $CLIENT_PRIVATE_KEY
+Address = 10.200.200.$CLIENT_IP/24
 DNS = ${dns_ip_1}, ${dns_ip_2}
 
 [Peer]
-PublicKey = SERVER_PUBLIC_KEY_PLACEHOLDER
+PublicKey = $SERVER_PUBLIC_KEY
 Endpoint = VPN_PUBLIC_IP_PLACEHOLDER:51820
 AllowedIPs = 10.0.20.0/24, 10.0.21.0/24, 10.200.200.0/24
 PersistentKeepalive = 25
 CLIENT
-  
-  # Replace placeholders in client config
-  sed -i "s|CLIENT_PRIVATE_KEY_PLACEHOLDER|$CLIENT_PRIVATE_KEY|g" /etc/wireguard/clients/client$i.conf
-  sed -i "s|CLIENT_IP_PLACEHOLDER|$((i+1))|g" /etc/wireguard/clients/client$i.conf
-  sed -i "s|SERVER_PUBLIC_KEY_PLACEHOLDER|$SERVER_PUBLIC_KEY|g" /etc/wireguard/clients/client$i.conf
   
   # Generate QR code for mobile clients
   qrencode -t ansiutf8 < /etc/wireguard/clients/client$i.conf > /etc/wireguard/clients/client$i-qr.txt

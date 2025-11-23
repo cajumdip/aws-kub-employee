@@ -475,8 +475,6 @@ def delete_ad_user(username, directory_name, secret_arn):
 # --- Infrastructure Helpers ---
 
 def launch_workstation(name, emp_id, dept):
-    import time
-    
     # Get AD admin credentials
     secret_val = secretsmanager.get_secret_value(SecretId=AD_SECRET_ARN)['SecretString']
     secret = json.loads(secret_val)
