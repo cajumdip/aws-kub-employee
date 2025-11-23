@@ -233,8 +233,17 @@ def handle_offboarding(record):
                     time.sleep(AWS_CLEANUP_DELAY_SECONDS)
                     
                     # Get instance details to find network interfaces
-                    instance_details = ec2.describe_instances(InstanceIds=[instance_id])
-                    for reservation in instance_details['Reservations']:
+                    try:
+                        instance_details = ec2.describe_instances(InstanceIds=[instance_id])
+                    except ec2.exceptions.ClientError as e:
+                        if e.response['Error']['Code'] == 'InvalidInstanceID.NotFound':
+                            print(f"   ✓ Instance {instance_id} already fully cleaned up by AWS")
+                        else:
+                            raise
+                        # Skip ENI cleanup if instance is already gone
+                        instance_details = {'Reservations': []}
+                    
+                    for reservation in instance_details.get('Reservations', []):
                         for instance in reservation['Instances']:
                             for eni in instance.get('NetworkInterfaces', []):
                                 eni_id = eni.get('NetworkInterfaceId')
