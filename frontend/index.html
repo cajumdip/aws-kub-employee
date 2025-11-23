@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Innovatech - Employee Portal</title>
+    <title>Innovatech Employee Portal</title>
     <style>
         * {
             margin: 0;
@@ -12,217 +12,275 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
+            font-family: Verdana, Arial, Helvetica, sans-serif;
+            background: #e8f0f5;
+            color: #333;
+            font-size: 11px;
+            line-height: 1.5;
         }
 
         .container {
-            max-width: 1400px;
-            margin: 0 auto;
+            width: 95%;
+            max-width: 1200px;
+            margin: 15px 0 15px 20px;  /* Changed from "15px auto" to left-align */
         }
 
-        header {
-            text-align: center;
-            color: white;
-            margin-bottom: 40px;
+        #header {
+            background: #2b5278;
+            border: 2px solid #1a3a52;
+            padding: 20px;
+            margin-bottom: 15px;
         }
 
         h1 {
-            font-size: 3em;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 32px;
+            color: #ffffff;
+            font-weight: bold;
+            margin-bottom: 5px;
+            letter-spacing: 1px;
         }
 
-        .subtitle {
-            font-size: 1.2em;
-            opacity: 0.9;
+        h1 span {
+            color: #7db9e8;
         }
 
-        .card {
-            background: white;
-            border-radius: 15px;
-            padding: 30px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            margin-bottom: 30px;
+        #tagline {
+            font-size: 12px;
+            color: #a8c8e0;
+            font-weight: normal;
         }
 
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: #333;
-        }
-
-        input, select {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 16px;
-            transition: border-color 0.3s;
-        }
-
-        input:focus, select:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-
-        .btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 14px 30px;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-
-        .btn:active {
-            transform: translateY(0);
-        }
-
-        .btn-danger {
-            background: linear-gradient(135deg, #f44336 0%, #e91e63 100%);
-        }
-
-        .btn-danger:hover {
-            box-shadow: 0 5px 15px rgba(244, 67, 54, 0.4);
-        }
-
-        .btn-small {
-            padding: 8px 16px;
-            font-size: 14px;
-            margin-top: 10px;
-        }
-
-        .employee-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-        }
-
-        .employee-card {
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-            border-radius: 12px;
-            padding: 20px;
-            transition: transform 0.2s;
-            position: relative;
-        }
-
-        .employee-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
-        }
-
-        .employee-name {
-            font-size: 1.3em;
-            font-weight: 700;
-            color: #333;
-            margin-bottom: 10px;
-        }
-
-        .employee-info {
-            color: #666;
-            margin: 5px 0;
-            font-size: 0.95em;
-        }
-
-        .status-badge {
-            display: inline-block;
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-size: 0.85em;
-            font-weight: 600;
-            margin-top: 10px;
-        }
-
-        .status-active {
-            background: #4caf50;
-            color: white;
-        }
-
-        .status-inactive {
-            background: #f44336;
-            color: white;
-        }
-
-        .loading {
+        .nav-bar {
+            background: #7db9e8;
+            border: 2px solid #5a9dd1;
+            padding: 8px 15px;
+            margin-bottom: 15px;
             text-align: center;
-            padding: 40px;
-            color: #667eea;
-            font-size: 1.2em;
         }
 
-        .alert {
+        .content-box {
+            background: #ffffff;
+            border: 2px solid #7db9e8;
             padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            animation: slideIn 0.3s ease;
+            margin-bottom: 15px;
         }
 
-        @keyframes slideIn {
-            from {
-                transform: translateY(-20px);
-                opacity: 0;
-            }
-            to {
-                transform: translateY(0);
-                opacity: 1;
-            }
+        h2 {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 16px;
+            color: #2b5278;
+            font-weight: bold;
+            margin-bottom: 12px;
+            padding-bottom: 5px;
+            border-bottom: 2px solid #7db9e8;
         }
 
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
+        .stats-container {
+            margin-bottom: 15px;
         }
 
-        .alert-error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
+        .stats-row {
+            display: table;
+            width: 100%;
+            border-spacing: 10px;
         }
 
-        .stats {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
+        .stat-cell {
+            display: table-cell;
+            width: 33.33%;
         }
 
-        .stat-card {
-            flex: 1;
-            min-width: 200px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 12px;
+        .stat-box {
+            background: #e8f4f8;
+            border: 2px solid #7db9e8;
+            padding: 15px;
             text-align: center;
         }
 
         .stat-number {
-            font-size: 2.5em;
-            font-weight: 700;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 36px;
+            color: #2b5278;
+            font-weight: bold;
+            display: block;
         }
 
         .stat-label {
-            font-size: 1em;
-            opacity: 0.9;
-            margin-top: 5px;
+            font-size: 10px;
+            color: #5a7a9a;
+            text-transform: uppercase;
+            font-weight: bold;
+            margin-top: 3px;
+        }
+
+        table.form-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        table.form-table td {
+            padding: 8px 5px;
+            vertical-align: top;
+        }
+
+        table.form-table label {
+            display: block;
+            color: #2b5278;
+            font-size: 11px;
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        select {
+            width: 100%;
+            padding: 4px 6px;
+            background: #ffffff;
+            border: 1px solid #7db9e8;
+            color: #333;
+            font-family: Verdana, Arial, Helvetica, sans-serif;
+            font-size: 11px;
+        }
+
+        input[type="text"]:focus,
+        input[type="email"]:focus,
+        select:focus {
+            outline: none;
+            border: 2px solid #2b5278;
+        }
+
+        .button {
+            background: #2b5278;
+            border: 2px solid #1a3a52;
+            padding: 6px 16px;
+            color: #ffffff;
+            font-family: Verdana, Arial, Helvetica, sans-serif;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .button:hover {
+            background: #3a6a98;
+        }
+
+        .button:active {
+            background: #1a3a52;
+        }
+
+        .button-delete {
+            background: #cc3333;
+            border: 2px solid #aa2222;
+            color: #fff;
+        }
+
+        .button-delete:hover {
+            background: #dd4444;
+        }
+
+        .button-small {
+            padding: 4px 12px;
+            font-size: 10px;
+        }
+
+        .employee-grid {
+            display: table;
+            width: 100%;
+            border-spacing: 10px;
+        }
+
+        .employee-row {
+            display: table-row;
+        }
+
+        .employee-cell {
+            display: table-cell;
+            width: 33.33%;
+            vertical-align: top;
+        }
+
+        .employee-box {
+            background: #e8f4f8;
+            border: 2px solid #7db9e8;
+            padding: 12px;
+            height: 100%;
+        }
+
+        .employee-name {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 14px;
+            color: #2b5278;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .employee-info {
+            font-size: 11px;
+            color: #555;
+            margin: 4px 0;
+        }
+
+        .employee-info strong {
+            color: #2b5278;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            font-size: 9px;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-top: 8px;
+            border: 1px solid;
+        }
+
+        .badge-active {
+            background: #339933;
+            border-color: #227722;
+            color: #fff;
+        }
+
+        .badge-inactive {
+            background: #cc3333;
+            border-color: #aa2222;
+            color: #fff;
+        }
+
+        .badge-workstation {
+            background: #2b5278;
+            border-color: #1a3a52;
+            color: #fff;
+            padding: 4px 10px;
+            font-size: 10px;
+        }
+
+        .alert {
+            padding: 12px 15px;
+            margin-bottom: 15px;
+            border: 2px solid;
+            font-size: 11px;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            border-color: #339933;
+            color: #155724;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            border-color: #cc3333;
+            color: #721c24;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 30px;
+            color: #7db9e8;
+            font-style: italic;
         }
 
         .modal {
@@ -233,151 +291,174 @@
             top: 0;
             width: 100%;
             height: 100%;
-            background-color: rgba(0,0,0,0.5);
-            animation: fadeIn 0.3s;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
+            background-color: rgba(0, 0, 0, 0.6);
         }
 
         .modal-content {
-            background-color: white;
-            margin: 15% auto;
-            padding: 30px;
-            border-radius: 15px;
+            background: #ffffff;
+            border: 3px solid #2b5278;
+            margin: 8% auto;
+            padding: 20px;
             width: 90%;
             max-width: 500px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-            animation: slideDown 0.3s;
-        }
-
-        @keyframes slideDown {
-            from {
-                transform: translateY(-50px);
-                opacity: 0;
-            }
-            to {
-                transform: translateY(0);
-                opacity: 1;
-            }
         }
 
         .modal-header {
-            font-size: 1.5em;
-            font-weight: 700;
-            margin-bottom: 20px;
-            color: #333;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 18px;
+            color: #cc3333;
+            font-weight: bold;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #7db9e8;
         }
 
         .modal-body {
-            margin-bottom: 20px;
-            color: #666;
+            color: #333;
+            margin-bottom: 15px;
             line-height: 1.6;
         }
 
-        .modal-footer {
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
+        .modal-body ul {
+            margin: 10px 0 10px 25px;
         }
 
-        .workstation-badge {
-            background: linear-gradient(135deg, #00b4db 0%, #0083b0 100%);
-            color: white;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 0.85em;
-            margin-top: 10px;
-            display: inline-block;
+        .modal-body li {
+            margin: 5px 0;
+            color: #555;
+        }
+
+        .modal-footer {
+            text-align: right;
+            padding-top: 10px;
+            border-top: 1px solid #ccc;
+        }
+
+        .modal-footer .button {
+            margin-left: 8px;
+        }
+
+        select option {
+            background: #ffffff;
+        }
+
+        @media (max-width: 768px) {
+            .stats-row,
+            .employee-grid {
+                display: block;
+            }
+            
+            .stat-cell,
+            .employee-cell {
+                display: block;
+                width: 100%;
+                margin-bottom: 10px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <header>
-            <h1>🚀 Innovatech Solutions</h1>
-            <p class="subtitle">Employee Management Portal</p>
-        </header>
+        <div id="header">
+            <h1>Innovatech<span>Portal</span></h1>
+            <div id="tagline">Employee Management System</div>
+        </div>
+
+        <div class="nav-bar">
+            Employee Management Dashboard
+        </div>
 
         <div id="alertContainer"></div>
 
-        <!-- Add Employee Form -->
-        <div class="card">
-            <h2>➕ Add New Employee</h2>
+        <!-- Stats -->
+        <div class="stats-container">
+            <div class="stats-row">
+                <div class="stat-cell">
+                    <div class="stat-box">
+                        <span class="stat-number" id="totalEmployees">0</span>
+                        <div class="stat-label">Total Employees</div>
+                    </div>
+                </div>
+                <div class="stat-cell">
+                    <div class="stat-box">
+                        <span class="stat-number" id="activeEmployees">0</span>
+                        <div class="stat-label">Active</div>
+                    </div>
+                </div>
+                <div class="stat-cell">
+                    <div class="stat-box">
+                        <span class="stat-number" id="totalWorkstations">0</span>
+                        <div class="stat-label">Workstations</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Employee -->
+        <div class="content-box">
+            <h2>Add New Employee</h2>
             <form id="employeeForm">
-                <div class="form-group">
-                    <label for="name">Full Name</label>
-                    <input type="text" id="name" required placeholder="John Doe">
-                </div>
-                <div class="form-group">
-                    <label for="email">Email</label>
-                    <input type="email" id="email" required placeholder="john.doe@innovatech.com">
-                </div>
-                <div class="form-group">
-                    <label for="department">Department</label>
-                    <select id="department" required>
-                        <option value="">Select Department</option>
-                        <option value="Engineering">Engineering</option>
-                        <option value="Marketing">Marketing</option>
-                        <option value="Sales">Sales</option>
-                        <option value="HR">HR</option>
-                        <option value="Finance">Finance</option>
-                        <option value="Operations">Operations</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="role">Role</label>
-                    <input type="text" id="role" required placeholder="Senior Developer">
-                </div>
-                <button type="submit" class="btn">Add Employee</button>
+                <table class="form-table">
+                    <tr>
+                        <td width="50%">
+                            <label for="name">Full Name</label>
+                            <input type="text" id="name" required placeholder="John Doe">
+                        </td>
+                        <td width="50%">
+                            <label for="email">Email Address</label>
+                            <input type="email" id="email" required placeholder="john.doe@innovatech.com">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <label for="department">Department</label>
+                            <select id="department" required>
+                                <option value="">Select Department</option>
+                                <option value="Engineering">Engineering</option>
+                                <option value="Marketing">Marketing</option>
+                                <option value="Sales">Sales</option>
+                                <option value="HR">HR</option>
+                                <option value="Finance">Finance</option>
+                                <option value="Operations">Operations</option>
+                            </select>
+                        </td>
+                        <td>
+                            <label for="role">Role</label>
+                            <input type="text" id="role" required placeholder="Senior Developer">
+                        </td>
+                    </tr>
+                </table>
+                <button type="submit" class="button">Add Employee</button>
             </form>
         </div>
 
-        <!-- Stats -->
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-number" id="totalEmployees">0</div>
-                <div class="stat-label">Total Employees</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="activeEmployees">0</div>
-                <div class="stat-label">Active</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="totalWorkstations">0</div>
-                <div class="stat-label">Workstations</div>
-            </div>
-        </div>
-
-        <!-- Employee List -->
-        <div class="card">
-            <h2>👥 Employee Directory</h2>
-            <div id="employeeList" class="employee-grid">
+        <!-- Employee Directory -->
+        <div class="content-box">
+            <h2>Employee Directory</h2>
+            <div id="employeeList">
                 <div class="loading">Loading employees...</div>
             </div>
         </div>
     </div>
 
-    <!-- Delete Confirmation Modal -->
+    <!-- Delete Modal -->
     <div id="deleteModal" class="modal">
         <div class="modal-content">
-            <div class="modal-header">⚠️ Confirm Deletion</div>
+            <div class="modal-header">Confirm Deletion</div>
             <div class="modal-body">
                 <p><strong>Are you sure you want to remove this employee?</strong></p>
-                <p style="margin-top: 10px;">This will:</p>
-                <ul style="margin-left: 20px; margin-top: 10px;">
+                <p style="margin-top: 10px;">This action will:</p>
+                <ul>
                     <li>Terminate their EC2 workstation</li>
                     <li>Delete their IAM user and access keys</li>
                     <li>Remove all AWS permissions</li>
                     <li>Delete enrollment scripts</li>
                 </ul>
-                <p style="margin-top: 15px; color: #d32f2f; font-weight: 600;">⚠️ This action cannot be undone!</p>
+                <p style="margin-top: 12px; color: #cc3333; font-weight: bold;">This action cannot be undone.</p>
             </div>
             <div class="modal-footer">
-                <button class="btn" onclick="closeDeleteModal()">Cancel</button>
-                <button class="btn btn-danger" id="confirmDeleteBtn">Delete Employee</button>
+                <button class="button" onclick="closeDeleteModal()">Cancel</button>
+                <button class="button button-delete" id="confirmDeleteBtn">Delete Employee</button>
             </div>
         </div>
     </div>
@@ -386,7 +467,6 @@
         const API_URL = '/api';
         let currentDeleteId = null;
 
-        // Show alert
         function showAlert(message, type = 'success') {
             const alertContainer = document.getElementById('alertContainer');
             const alert = document.createElement('div');
@@ -399,7 +479,6 @@
             }, 5000);
         }
 
-        // Load employees
         async function loadEmployees() {
             try {
                 const response = await fetch(`${API_URL}/employees`);
@@ -413,40 +492,59 @@
                 }
             } catch (error) {
                 document.getElementById('employeeList').innerHTML = 
-                    `<p style="color: red;">Error loading employees: ${error.message}</p>`;
+                    `<p style="color: #cc3333;">Error loading employees: ${error.message}</p>`;
             }
         }
 
-        // Display employees
         function displayEmployees(employees) {
             const container = document.getElementById('employeeList');
             
             if (employees.length === 0) {
-                container.innerHTML = '<p>No employees found. Add your first employee above!</p>';
+                container.innerHTML = '<p style="color: #666;">No employees found. Add your first employee above.</p>';
                 return;
             }
 
-            container.innerHTML = employees.map(emp => `
-                <div class="employee-card">
-                    <div class="employee-name">${emp.name}</div>
-                    <div class="employee-info">📧 ${emp.email}</div>
-                    <div class="employee-info">🏢 ${emp.department}</div>
-                    <div class="employee-info">💼 ${emp.role}</div>
-                    <div class="employee-info">🆔 ID: ${emp.employee_id.substring(0, 8)}</div>
-                    ${emp.workstation_id ? `<div class="workstation-badge">💻 Workstation: ${emp.workstation_id.substring(0, 10)}</div>` : ''}
-                    <span class="status-badge status-${emp.status}">
-                        ${emp.status.toUpperCase()}
-                    </span>
-                    ${emp.status === 'active' ? `
-                        <button class="btn btn-danger btn-small" onclick="showDeleteModal('${emp.employee_id}', '${emp.name}')">
-                            🗑️ Remove Employee
-                        </button>
-                    ` : ''}
-                </div>
-            `).join('');
+            // Create table structure for grid layout
+            let html = '<div class="employee-grid">';
+            let rowCount = Math.ceil(employees.length / 3);
+            
+            for (let i = 0; i < rowCount; i++) {
+                html += '<div class="employee-row">';
+                for (let j = 0; j < 3; j++) {
+                    let empIndex = i * 3 + j;
+                    if (empIndex < employees.length) {
+                        let emp = employees[empIndex];
+                        html += `
+                            <div class="employee-cell">
+                                <div class="employee-box">
+                                    <div class="employee-name">${emp.name}</div>
+                                    <div class="employee-info"><strong>Email:</strong> ${emp.email}</div>
+                                    <div class="employee-info"><strong>Dept:</strong> ${emp.department}</div>
+                                    <div class="employee-info"><strong>Role:</strong> ${emp.role}</div>
+                                    <div class="employee-info"><strong>ID:</strong> ${emp.employee_id.substring(0, 8)}</div>
+                                    ${emp.workstation_id ? `<div><span class="badge badge-workstation">Workstation: ${emp.workstation_id.substring(0, 10)}</span></div>` : ''}
+                                    <div>
+                                        <span class="badge badge-${emp.status}">${emp.status}</span>
+                                    </div>
+                                    ${emp.status === 'active' ? `
+                                        <button class="button button-delete button-small" onclick="showDeleteModal('${emp.employee_id}', '${emp.name}')">
+                                            Remove Employee
+                                        </button>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        html += '<div class="employee-cell"></div>';
+                    }
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+            
+            container.innerHTML = html;
         }
 
-        // Update stats
         function updateStats(employees) {
             const total = employees.length;
             const active = employees.filter(emp => emp.status === 'active').length;
@@ -457,7 +555,6 @@
             document.getElementById('totalWorkstations').textContent = workstations;
         }
 
-        // Show delete confirmation modal
         function showDeleteModal(employeeId, employeeName) {
             currentDeleteId = employeeId;
             const modal = document.getElementById('deleteModal');
@@ -466,13 +563,11 @@
             modal.style.display = 'block';
         }
 
-        // Close delete modal
         function closeDeleteModal() {
             document.getElementById('deleteModal').style.display = 'none';
             currentDeleteId = null;
         }
 
-        // Confirm delete
         document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
             if (!currentDeleteId) return;
 
@@ -484,18 +579,17 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    showAlert('✅ Employee removed successfully! Resources are being cleaned up...', 'success');
+                    showAlert('Employee removed successfully. Resources are being cleaned up.', 'success');
                     closeDeleteModal();
                     loadEmployees();
                 } else {
                     throw new Error(data.error);
                 }
             } catch (error) {
-                showAlert(`❌ Error: ${error.message}`, 'error');
+                showAlert(`Error: ${error.message}`, 'error');
             }
         });
 
-        // Close modal when clicking outside
         window.onclick = function(event) {
             const modal = document.getElementById('deleteModal');
             if (event.target == modal) {
@@ -503,7 +597,6 @@
             }
         }
 
-        // Handle form submission
         document.getElementById('employeeForm').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -526,21 +619,18 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    showAlert('✅ Employee added successfully! Creating workstation and setting up access...', 'success');
+                    showAlert('Employee added successfully. Creating workstation and setting up access.', 'success');
                     e.target.reset();
                     loadEmployees();
                 } else {
                     throw new Error(data.error);
                 }
             } catch (error) {
-                showAlert(`❌ Error: ${error.message}`, 'error');
+                showAlert(`Error: ${error.message}`, 'error');
             }
         });
 
-        // Load employees on page load
         loadEmployees();
-
-        // Refresh every 30 seconds
         setInterval(loadEmployees, 30000);
     </script>
 </body>
