@@ -60,6 +60,22 @@ data "aws_ami" "amazon_linux_2" {
   }
 }
 
+# Find the latest Ubuntu 22.04 ARM64 AMI for VPN instance
+data "aws_ami" "ubuntu_arm64" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-arm64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 # ===== VPC and Networking =====
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
@@ -195,6 +211,94 @@ resource "aws_instance" "nat" {
 resource "aws_eip_association" "nat_instance" {
   instance_id   = aws_instance.nat.id
   allocation_id = aws_eip.nat_instance.id
+}
+
+# ===== VPN Instance (WireGuard) =====
+resource "aws_security_group" "vpn" {
+  count       = var.enable_vpn ? 1 : 0
+  name        = "${var.project_name}-vpn-sg"
+  description = "Security group for WireGuard VPN server"
+  vpc_id      = aws_vpc.main.id
+
+  # WireGuard port
+  ingress {
+    from_port   = 51820
+    to_port     = 51820
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "WireGuard VPN"
+  }
+
+  # SSH access from admin IP only
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.admin_ip_cidr]
+    description = "SSH access from admin IP"
+  }
+
+  # Allow all outbound
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound"
+  }
+
+  tags = {
+    Name = "${var.project_name}-vpn-sg"
+  }
+}
+
+resource "aws_eip" "vpn" {
+  count  = var.enable_vpn ? 1 : 0
+  domain = "vpc"
+  tags = {
+    Name = "${var.project_name}-vpn-eip"
+  }
+  depends_on = [aws_internet_gateway.main]
+}
+
+resource "aws_instance" "vpn" {
+  count                       = var.enable_vpn ? 1 : 0
+  ami                         = data.aws_ami.ubuntu_arm64.id
+  instance_type              = var.vpn_instance_type
+  subnet_id                  = aws_subnet.public[0].id
+  vpc_security_group_ids     = [aws_security_group.vpn[0].id]
+  associate_public_ip_address = true
+  source_dest_check          = false
+
+  user_data = templatefile("${path.module}/vpn-userdata.sh", {
+    vpn_client_count = var.vpn_client_count
+    dns_ip_1         = aws_directory_service_directory.main.dns_ip_addresses[0]
+    dns_ip_2         = aws_directory_service_directory.main.dns_ip_addresses[1]
+  })
+
+  tags = {
+    Name = "${var.project_name}-vpn-server"
+  }
+
+  depends_on = [aws_internet_gateway.main, aws_directory_service_directory.main]
+}
+
+resource "aws_eip_association" "vpn" {
+  count         = var.enable_vpn ? 1 : 0
+  instance_id   = aws_instance.vpn[0].id
+  allocation_id = aws_eip.vpn[0].id
+}
+
+# Update workstation security group to allow RDP from VPN clients
+resource "aws_security_group_rule" "workstation_rdp_from_vpn" {
+  count             = var.enable_vpn ? 1 : 0
+  type              = "ingress"
+  from_port         = 3389
+  to_port           = 3389
+  protocol          = "tcp"
+  cidr_blocks       = ["10.200.200.0/24"]  # VPN client network
+  security_group_id = aws_security_group.workstations.id
+  description       = "RDP from VPN clients"
 }
 
 # ===== Route Tables =====

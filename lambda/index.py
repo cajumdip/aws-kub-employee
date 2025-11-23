@@ -37,6 +37,11 @@ DIRECTORY_NAME = os.environ.get('DIRECTORY_NAME', 'innovatech.local')
 AD_SECRET_ARN = os.environ.get('AD_SECRET_ARN')
 DOMAIN_JOIN_DOC = os.environ.get('DOMAIN_JOIN_DOC')
 
+# Offboarding cleanup constants
+AWS_CLEANUP_DELAY_SECONDS = 3
+MAX_ENI_CLEANUP_RETRIES = 5
+INITIAL_RETRY_DELAY_SECONDS = 2
+
 workstations_table = dynamodb.Table(WORKSTATIONS_TABLE)
 
 def handler(event, context):
@@ -123,23 +128,202 @@ def handle_offboarding(record):
     old_image = record['dynamodb']['OldImage']
     emp_id = old_image['employee_id']['S']
     emp_name = old_image['name']['S']
+    emp_email = old_image.get('email', {}).get('S', '')
     
-    print(f"🗑️ Offboarding: {emp_name}")
+    print(f"🗑️ Offboarding: {emp_name} (Employee ID: {emp_id})")
+    
+    cleanup_actions = []
+    errors = []
     
     try:
-        # Terminate EC2
+        # Get workstation details from DynamoDB
         resp = workstations_table.get_item(Key={'employee_id': emp_id})
-        if 'Item' in resp:
-            instance_id = resp['Item'].get('instance_id')
-            if instance_id:
+        workstation_data = resp.get('Item', {})
+        
+        instance_id = workstation_data.get('instance_id')
+        iam_username = workstation_data.get('iam_username')
+        ad_username_full = workstation_data.get('ad_username', '')
+        # Extract username from domain\username format (e.g., "innovatech.local\john.doe" -> "john.doe")
+        ad_username = ad_username_full.split('\\')[-1] if '\\' in ad_username_full else ad_username_full
+        
+        # 1. Delete IAM User and Access Keys
+        if iam_username:
+            try:
+                print(f"🔑 Deleting IAM user: {iam_username}")
+                
+                # Delete access keys first
+                try:
+                    access_keys = iam.list_access_keys(UserName=iam_username)
+                    for key in access_keys.get('AccessKeyMetadata', []):
+                        iam.delete_access_key(UserName=iam_username, AccessKeyId=key['AccessKeyId'])
+                        print(f"   ✓ Deleted access key: {key['AccessKeyId']}")
+                except Exception as e:
+                    print(f"   ⚠️ Error deleting access keys: {e}")
+                
+                # Detach user policies
+                try:
+                    attached_policies = iam.list_attached_user_policies(UserName=iam_username)
+                    for policy in attached_policies.get('AttachedPolicies', []):
+                        iam.detach_user_policy(UserName=iam_username, PolicyArn=policy['PolicyArn'])
+                        print(f"   ✓ Detached policy: {policy['PolicyName']}")
+                except Exception as e:
+                    print(f"   ⚠️ Error detaching policies: {e}")
+                
+                # Delete inline user policies
+                try:
+                    inline_policies = iam.list_user_policies(UserName=iam_username)
+                    for policy_name in inline_policies.get('PolicyNames', []):
+                        iam.delete_user_policy(UserName=iam_username, PolicyName=policy_name)
+                        print(f"   ✓ Deleted inline policy: {policy_name}")
+                except Exception as e:
+                    print(f"   ⚠️ Error deleting inline policies: {e}")
+                
+                # Remove from groups
+                try:
+                    groups = iam.list_groups_for_user(UserName=iam_username)
+                    for group in groups.get('Groups', []):
+                        iam.remove_user_from_group(UserName=iam_username, GroupName=group['GroupName'])
+                        print(f"   ✓ Removed from group: {group['GroupName']}")
+                except Exception as e:
+                    print(f"   ⚠️ Error removing from groups: {e}")
+                
+                # Finally, delete the user
+                iam.delete_user(UserName=iam_username)
+                print(f"   ✅ IAM user deleted: {iam_username}")
+                cleanup_actions.append(f"Deleted IAM user: {iam_username}")
+                
+            except iam.exceptions.NoSuchEntityException:
+                print(f"   ⚠️ IAM user not found: {iam_username}")
+            except Exception as e:
+                error_msg = f"Failed to delete IAM user {iam_username}: {str(e)}"
+                print(f"   ❌ {error_msg}")
+                errors.append(error_msg)
+        
+        # 2. Delete/Disable AD User
+        if ad_username and LDAP_AVAILABLE and AD_SECRET_ARN:
+            try:
+                print(f"👤 Deleting AD user: {ad_username}")
+                delete_ad_user(ad_username, DIRECTORY_NAME, AD_SECRET_ARN)
+                print(f"   ✅ AD user deleted: {ad_username}")
+                cleanup_actions.append(f"Deleted AD user: {ad_username}")
+            except Exception as e:
+                error_msg = f"Failed to delete AD user {ad_username}: {str(e)}"
+                print(f"   ❌ {error_msg}")
+                errors.append(error_msg)
+        
+        # 3. Terminate EC2 Instance and Wait for Termination
+        if instance_id:
+            try:
+                print(f"🖥️ Terminating EC2 instance: {instance_id}")
                 ec2.terminate_instances(InstanceIds=[instance_id])
-            workstations_table.delete_item(Key={'employee_id': emp_id})
-            
+                
+                # Wait for instance to fully terminate
+                print(f"⏳ Waiting for instance {instance_id} to terminate...")
+                waiter = ec2.get_waiter('instance_terminated')
+                waiter.wait(
+                    InstanceIds=[instance_id],
+                    WaiterConfig={'Delay': 15, 'MaxAttempts': 40}  # Wait up to 10 minutes
+                )
+                print(f"   ✅ Instance terminated: {instance_id}")
+                cleanup_actions.append(f"Terminated EC2 instance: {instance_id}")
+                
+                # Check for and delete any lingering network interfaces
+                try:
+                    # Small delay to allow AWS to begin cleanup
+                    time.sleep(AWS_CLEANUP_DELAY_SECONDS)
+                    
+                    # Get instance details to find network interfaces
+                    try:
+                        instance_details = ec2.describe_instances(InstanceIds=[instance_id])
+                    except ec2.exceptions.ClientError as e:
+                        if e.response['Error']['Code'] == 'InvalidInstanceID.NotFound':
+                            print(f"   ✓ Instance {instance_id} already fully cleaned up by AWS")
+                        else:
+                            raise
+                        # Skip ENI cleanup if instance is already gone
+                        instance_details = {'Reservations': []}
+                    
+                    for reservation in instance_details.get('Reservations', []):
+                        for instance in reservation['Instances']:
+                            for eni in instance.get('NetworkInterfaces', []):
+                                eni_id = eni.get('NetworkInterfaceId')
+                                if eni_id and not eni.get('Attachment', {}).get('DeleteOnTermination', True):
+                                    # Wait for ENI to be available for deletion with exponential backoff
+                                    retry_delay = INITIAL_RETRY_DELAY_SECONDS
+                                    for attempt in range(MAX_ENI_CLEANUP_RETRIES):
+                                        try:
+                                            # Check ENI status
+                                            eni_desc = ec2.describe_network_interfaces(NetworkInterfaceIds=[eni_id])
+                                            eni_status = eni_desc['NetworkInterfaces'][0]['Status']
+                                            
+                                            if eni_status == 'available':
+                                                ec2.delete_network_interface(NetworkInterfaceId=eni_id)
+                                                print(f"   ✓ Deleted network interface: {eni_id}")
+                                                cleanup_actions.append(f"Deleted network interface: {eni_id}")
+                                                break
+                                            else:
+                                                print(f"   ⏳ ENI {eni_id} status: {eni_status}, waiting...")
+                                                time.sleep(retry_delay)
+                                                retry_delay *= 2  # Exponential backoff
+                                        except ec2.exceptions.ClientError as e:
+                                            if e.response['Error']['Code'] == 'InvalidNetworkInterfaceID.NotFound':
+                                                print(f"   ✓ Network interface {eni_id} already deleted")
+                                                break
+                                            elif attempt < MAX_ENI_CLEANUP_RETRIES - 1:
+                                                print(f"   ⏳ ENI cleanup retry {attempt + 1}/{MAX_ENI_CLEANUP_RETRIES}")
+                                                time.sleep(retry_delay)
+                                                retry_delay *= 2
+                                            else:
+                                                raise
+                except Exception as e:
+                    # Non-critical error - ENI might be auto-deleted by AWS
+                    print(f"   ℹ️ Network interface cleanup: {e}")
+                    
+            except Exception as e:
+                error_msg = f"Failed to terminate instance {instance_id}: {str(e)}"
+                print(f"   ❌ {error_msg}")
+                errors.append(error_msg)
+        
+        # 4. Remove from workstations table (only after successful termination)
+        if workstation_data:
+            try:
+                workstations_table.delete_item(Key={'employee_id': emp_id})
+                print(f"   ✅ Removed from workstations table")
+                cleanup_actions.append("Removed workstation record from database")
+            except Exception as e:
+                error_msg = f"Failed to remove from workstations table: {str(e)}"
+                print(f"   ❌ {error_msg}")
+                errors.append(error_msg)
+        
+        # 5. Send comprehensive Slack notification
         if SLACK_WEBHOOK:
-            send_slack("👋 Employee Offboarded", f"Resources for {emp_name} have been cleaned up.")
+            status_emoji = "✅" if not errors else "⚠️"
+            status_text = "Complete" if not errors else "Complete with Errors"
             
+            message = f"*Employee:* {emp_name}\n*Employee ID:* {emp_id}"
+            if emp_email:
+                message += f"\n*Email:* {emp_email}"
+            
+            message += f"\n\n*Cleanup Actions:*"
+            for action in cleanup_actions:
+                message += f"\n✓ {action}"
+            
+            if errors:
+                message += f"\n\n*Errors:*"
+                for error in errors:
+                    message += f"\n❌ {error}"
+            
+            send_slack(f"{status_emoji} Employee Offboarding {status_text}", message)
+        
+        print(f"✅ Offboarding complete for {emp_name}")
+        print(f"   Actions: {len(cleanup_actions)}, Errors: {len(errors)}")
+        
     except Exception as e:
-        print(f"❌ Error offboarding: {e}")
+        error_msg = f"Critical error during offboarding: {str(e)}"
+        print(f"❌ {error_msg}")
+        if SLACK_WEBHOOK:
+            send_slack("🚨 Offboarding Failed", f"*Employee:* {emp_name}\n*Error:* {error_msg}")
+        raise e
 
 # --- Active Directory Helpers ---
 
@@ -231,12 +415,66 @@ def _create_ad_user_object(conn, username, name, email, dept, directory_name):
     
     return dn
 
+def delete_ad_user(username, directory_name, secret_arn):
+    """
+    Deletes a user from AWS Managed AD.
+    """
+    
+    # 1. Retrieve Credentials
+    secret_val = secretsmanager.get_secret_value(SecretId=secret_arn)['SecretString']
+    secret = json.loads(secret_val)
+    admin_user = secret['username']
+    admin_pass = secret['password']
+    
+    print(f"🔌 Connecting to Active Directory: {directory_name} for user deletion...")
+    
+    try:
+        # Connect to AD
+        server = Server(
+            directory_name,
+            port=389,
+            use_ssl=False,
+            get_info=ALL,
+            connect_timeout=10
+        )
+        
+        conn = Connection(
+            server,
+            user=f"{admin_user}@{directory_name}",
+            password=admin_pass,
+            auto_bind=True,
+            receive_timeout=10
+        )
+        
+        print(f"✅ Connected to AD on port 389")
+        
+        # Build user DN
+        dc_parts = directory_name.split('.')
+        netbios_name = dc_parts[0].upper()
+        user_dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
+        
+        print(f"🔧 Deleting AD user: {user_dn}")
+        
+        # Delete the user
+        conn.delete(user_dn)
+        
+        if conn.result['result'] == 0:
+            print(f"✅ AD user deleted successfully")
+        elif conn.result['result'] == 32:
+            print(f"⚠️ AD user not found: {username}")
+        else:
+            raise Exception(f"User deletion failed: {conn.result['description']}")
+        
+        conn.unbind()
+        
+    except Exception as e:
+        print(f"❌ Failed to delete AD user: {e}")
+        raise e
+
 
 # --- Infrastructure Helpers ---
 
 def launch_workstation(name, emp_id, dept):
-    import time
-    
     # Get AD admin credentials
     secret_val = secretsmanager.get_secret_value(SecretId=AD_SECRET_ARN)['SecretString']
     secret = json.loads(secret_val)

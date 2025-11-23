@@ -89,3 +89,44 @@ output "ad_secret_arn" {
   description = "The ARN of the AD Admin Secret"
   value       = aws_secretsmanager_secret.ad_password.arn
 }
+
+output "vpn_enabled" {
+  description = "Whether VPN is enabled"
+  value       = var.enable_vpn
+}
+
+output "vpn_public_ip" {
+  description = "Public IP of the VPN server (connect to this IP)"
+  value       = var.enable_vpn ? aws_eip.vpn[0].public_ip : "VPN not enabled"
+}
+
+output "vpn_instance_id" {
+  description = "VPN server instance ID"
+  value       = var.enable_vpn ? aws_instance.vpn[0].id : "VPN not enabled"
+}
+
+output "vpn_client_config_location" {
+  description = "Location of VPN client configurations on the server"
+  value       = var.enable_vpn ? "SSH to VPN server and find configs in /etc/wireguard/clients/" : "VPN not enabled"
+}
+
+output "vpn_setup_commands" {
+  description = "Commands to retrieve VPN client configurations"
+  value       = var.enable_vpn ? <<-EOT
+    # SSH into the VPN server:
+    ssh ubuntu@${aws_eip.vpn[0].public_ip}
+    
+    # Update client configs with the public IP (run once after deployment):
+    sudo /usr/local/bin/update-vpn-configs.sh ${aws_eip.vpn[0].public_ip}
+    
+    # View client configurations:
+    sudo cat /etc/wireguard/clients/client1.conf
+    
+    # View QR code for mobile clients:
+    sudo cat /etc/wireguard/clients/client1-qr.txt
+    
+    # Check WireGuard status:
+    sudo wg show
+  EOT
+  : "VPN not enabled"
+}

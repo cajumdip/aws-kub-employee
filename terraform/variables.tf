@@ -52,3 +52,21 @@ variable "directory_edition" {
   type        = string
   default     = "Standard"
 }
+
+variable "enable_vpn" {
+  description = "Enable VPN instance for secure RDP access to workstations"
+  type        = bool
+  default     = true
+}
+
+variable "vpn_instance_type" {
+  description = "EC2 instance type for VPN server (t4g.nano for ARM-based cost savings)"
+  type        = string
+  default     = "t4g.nano"
+}
+
+variable "vpn_client_count" {
+  description = "Number of VPN client configurations to generate"
+  type        = number
+  default     = 5
+}
