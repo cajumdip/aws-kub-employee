@@ -1,0 +1,10 @@
+{
+    "commands":  [
+                     "Import-Module ActiveDirectory",
+                     "$adminUser = \"innovatech\\Admin\"",
+                     "$adminPass = ConvertTo-SecureString \"8u4\u0026jP2#mK9$vL1@wX7!qR6\" -AsPlainText -Force",
+                     "$credential = New-Object System.Management.Automation.PSCredential($adminUser, $adminPass)",
+                     "Rename-Computer -NewName \"WS-JANE-DOE\" -Force",
+                     "Add-Computer -DomainName \"innovatech.local\" -Credential $credential -OUPath \"OU=Computers,OU=innovatech,DC=innovatech,DC=local\" -Restart -Force"
+                 ]
+}

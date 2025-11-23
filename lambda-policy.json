@@ -59,6 +59,17 @@
         {
             "Effect": "Allow",
             "Action": [
+                "ssm:SendCommand",
+                "ssm:GetCommandInvocation"
+            ],
+            "Resource": [
+                "arn:aws:ec2:eu-central-1:143858013937:instance/*",
+                "arn:aws:ssm:eu-central-1::document/AWS-RunPowerShellScript"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
                 "s3:ListBucket"
             ],
             "Resource": "arn:aws:s3:::innovatech-enrollment-scripts"

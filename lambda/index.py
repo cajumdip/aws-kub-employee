@@ -71,28 +71,10 @@ def handle_onboarding(record):
         waiter.wait(InstanceIds=[instance_id], WaiterConfig={'Delay': 15, 'MaxAttempts': 20})
         print(f"✅ Instance {instance_id} is running")
         
-        # 3. Join Domain (SSM)
-        if DIRECTORY_ID:
-            print(f"🔗 Joining {instance_id} to {DIRECTORY_NAME}...")
-            try:
-                ssm.create_association(
-                    Name='AWS-JoinDirectoryServiceDomain',
-                    Targets=[{'Key': 'InstanceIds', 'Values': [instance_id]}],
-                    Parameters={
-                        'directoryId': [DIRECTORY_ID],
-                        'directoryName': [DIRECTORY_NAME]
-                    }
-                )
-                print("✅ Domain Join Association created")
-                
-                # Wait a bit for domain join to start processing
-                print("⏳ Waiting for domain join to initialize (30s)...")
-                time.sleep(30)
-                
-            except Exception as e:
-                print(f"❌ Domain Join failed: {e}")
+        # NOTE: Domain join now happens via User Data script (PowerShell Add-Computer)
+        # No SSM association needed!
         
-        # 4. Create AD User (now the workstation is ready for SSM commands)
+        # 3. Create AD User (via LDAP)
         ad_username = emp_email.split('@')[0]
         ad_password = None
         
@@ -112,11 +94,11 @@ def handle_onboarding(record):
         else:
             print("⚠️ Skipping AD creation (Missing Layer or Secret)")
         
-        # 5. Create IAM User (Backup/Console Access)
+        # 4. Create IAM User (Backup/Console Access)
         iam_username = emp_email.replace('@', '-').replace('.', '-')
         create_iam_user_safe(iam_username, emp_id, dept)
 
-        # 6. Save State
+        # 5. Save State
         workstations_table.put_item(Item={
             'employee_id': emp_id,
             'instance_id': instance_id,
@@ -126,7 +108,7 @@ def handle_onboarding(record):
             'created_at': datetime.utcnow().isoformat()
         })
 
-        # 7. Slack Notification
+        # 6. Slack Notification
         if SLACK_WEBHOOK:
             msg = f"*Name:* {emp_name}\n*AD User:* `{ad_username}`\n*Workstation:* `{instance_id}`"
             if ad_password:
@@ -207,11 +189,7 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
     # 3. Set password via SSM Run Command (more reliable than LDAPS from Lambda)
     temp_password = f"Welcome{datetime.now().year}!"
     
-    password_set = set_ad_password_via_ssm(username, temp_password, directory_name)
     
-    if not password_set:
-        print(f"⚠️ WARNING: User created but password could not be set via SSM.")
-        print(f"ℹ️ The workstation may still be initializing. Password will be set after domain join completes.")
     
     return temp_password
 
@@ -253,67 +231,94 @@ def _create_ad_user_object(conn, username, name, email, dept, directory_name):
     
     return dn
 
-def set_ad_password_via_ssm(username, password, directory_name):
-    """Set AD password using SSM Run Command on a domain-joined instance
-    
-    Security Notes:
-    - This approach is more secure than LDAPS from Lambda because the LDAPS method
-      was failing with SSL errors and exposing passwords in Lambda CloudWatch logs
-    - SSM command logs are encrypted at rest and access-controlled via IAM policies
-    - The password is visible in SSM command history - restrict access using IAM
-    - For production: Consider using AWS Secrets Manager references in SSM parameters
-    - MaxErrors=0 and MaxConcurrency=1 prevent multiple executions
-    """
-    try:
-        # Find a running domain-joined instance
-        response = ec2.describe_instances(
-            Filters=[
-                {'Name': 'tag:Domain', 'Values': [directory_name]},
-                {'Name': 'instance-state-name', 'Values': ['running']}
-            ]
-        )
-        
-        if not response['Reservations']:
-            print("⚠️ No domain-joined instance available for password reset")
-            return False
-        
-        instance_id = response['Reservations'][0]['Instances'][0]['InstanceId']
-        
-        print(f"🔐 Setting password via SSM on instance {instance_id}...")
-        
-        # Run PowerShell command to set password
-        command_response = ssm.send_command(
-            InstanceIds=[instance_id],
-            DocumentName='AWS-RunPowerShellScript',
-            Parameters={
-                'commands': [
-                    f'$password = ConvertTo-SecureString "{password}" -AsPlainText -Force',
-                    f'Set-ADAccountPassword -Identity "{username}" -NewPassword $password -Reset',
-                    f'Enable-ADAccount -Identity "{username}"'
-                ]
-            },
-            Comment=f'Set password for {username}',
-            MaxConcurrency='1',
-            MaxErrors='0'
-        )
-        
-        command_id = command_response['Command']['CommandId']
-        print(f"✅ Password reset command sent: {command_id}")
-        # Note: Command execution is asynchronous. The workstation will process it when ready.
-        # For full verification, use ssm.get_command_invocation() with polling (not implemented for simplicity)
-        return True
-        
-    except Exception as e:
-        print(f"❌ Failed to set password via SSM: {e}")
-        return False
 
 # --- Infrastructure Helpers ---
 
 def launch_workstation(name, emp_id, dept):
+    import time
+    
+    # Get AD admin credentials
+    secret_val = secretsmanager.get_secret_value(SecretId=AD_SECRET_ARN)['SecretString']
+    secret = json.loads(secret_val)
+    admin_user = secret['username']
+    admin_pass = secret['password']
+    
+    # Extract username from email
+    username = name.lower().replace(' ', '.')
+    temp_password = f"Welcome{datetime.now().year}!"
+    
+    # Generate unique computer name (max 15 chars for Windows)
+    timestamp_suffix = str(int(time.time()))[-4:]  # Last 4 digits of timestamp
+    computer_name = f"WS-{emp_id.replace('-', '')[:7]}{timestamp_suffix}"[:15]
+    
+    # User Data with PowerShell domain join
     user_data = f"""<powershell>
-    Rename-Computer -NewName "WS-{emp_id[:8]}" -Force
-    </powershell>
-    """
+# Configure DNS to use domain controllers
+$adapter = Get-NetAdapter | Where-Object {{$_.Status -eq "Up"}} | Select-Object -First 1
+Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("10.0.10.225", "10.0.11.177")
+
+# Rename computer
+Rename-Computer -NewName "{computer_name}" -Force
+
+# Wait for DNS and network
+Start-Sleep -Seconds 30
+
+# Install AD PowerShell module
+Install-WindowsFeature RSAT-AD-PowerShell -ErrorAction SilentlyContinue
+
+# Join domain
+$adminUser = "innovatech\\{admin_user}"
+$adminPass = ConvertTo-SecureString "{admin_pass}" -AsPlainText -Force
+$credential = New-Object System.Management.Automation.PSCredential($adminUser, $adminPass)
+
+$maxRetries = 5
+$retryCount = 0
+$success = $false
+
+while (-not $success -and $retryCount -lt $maxRetries) {{
+    try {{
+        Add-Computer -DomainName "{DIRECTORY_NAME}" -Credential $credential -OUPath "OU=Computers,OU=innovatech,DC=innovatech,DC=local" -Force -ErrorAction Stop
+        Write-Host "Domain join successful"
+        $success = $true
+    }} catch {{
+        $retryCount++
+        Write-Host "Domain join attempt $retryCount failed: $_"
+        Start-Sleep -Seconds 30
+    }}
+}}
+
+# Reboot if domain join succeeded
+if ($success) {{
+    Write-Host "Rebooting to complete domain join..."
+    Restart-Computer -Force
+}}
+
+# Wait for reboot and set password (runs after reboot due to persist tag)
+Start-Sleep -Seconds 180
+
+Import-Module ActiveDirectory -ErrorAction SilentlyContinue
+
+# Set user password with retries
+$retryCount = 0
+$success = $false
+
+while (-not $success -and $retryCount -lt 10) {{
+    try {{
+        $password = ConvertTo-SecureString "{temp_password}" -AsPlainText -Force
+        Set-ADAccountPassword -Identity "{username}" -NewPassword $password -Reset -Server "{DIRECTORY_NAME}" -Credential $credential -ErrorAction Stop
+        Enable-ADAccount -Identity "{username}" -Server "{DIRECTORY_NAME}" -Credential $credential -ErrorAction Stop
+        Write-Host "Password set successfully for {username}"
+        $success = $true
+    }} catch {{
+        $retryCount++
+        Write-Host "Password set attempt $retryCount failed: $_"
+        Start-Sleep -Seconds 30
+    }}
+}}
+</powershell>
+<persist>true</persist>
+"""
+    
     try:
         run_instances = ec2.run_instances(
             ImageId=WORKSTATION_AMI,
@@ -328,7 +333,8 @@ def launch_workstation(name, emp_id, dept):
                 'Tags': [
                     {'Key': 'Name', 'Value': f"{name}-Workstation"},
                     {'Key': 'EmployeeId', 'Value': emp_id},
-                    {'Key': 'Domain', 'Value': DIRECTORY_NAME}
+                    {'Key': 'Domain', 'Value': DIRECTORY_NAME},
+                    {'Key': 'ComputerName', 'Value': computer_name}
                 ]
             }]
         )

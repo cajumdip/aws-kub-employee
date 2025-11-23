@@ -745,6 +745,25 @@ resource "aws_iam_role_policy_attachment" "workstation_cloudwatch" {
   role       = aws_iam_role.workstation_role.name
 }
 
+resource "aws_iam_role_policy" "workstation_domain_join" {
+  name = "${var.project_name}-workstation-domain-join-policy"
+  role = aws_iam_role.workstation_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ds:CreateComputer",
+          "ds:DescribeDirectories"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "workstation_profile" {
   name = "${var.project_name}-workstation-profile"
   role = aws_iam_role.workstation_role.name
@@ -904,6 +923,16 @@ resource "aws_iam_role_policy" "lambda_onboarding" {
         Effect = "Allow"
         Action = [
           "ds:DescribeDirectories"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:SendCommand",
+          "ssm:GetCommandInvocation",
+          "ssm:CreateAssociation",
+          "ssm:DescribeAssociation"
         ]
         Resource = "*"
       }

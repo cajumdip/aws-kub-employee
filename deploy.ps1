@@ -185,6 +185,15 @@ metadata:
     kubectl apply -f k8s/02-frontend.yaml
     Start-Sleep -Seconds 5
 
+    kubectl apply -f k8s/03-rbac.yaml
+    Start-Sleep -Seconds 5
+
+    kubectl apply -f k8s/04-network-policies.yaml 
+    Start-Sleep -Seconds 5
+
+    kubectl apply -f k8s/05-resource-quotas.yaml
+    Start-Sleep -Seconds 5
+
     Pop-Location # Return to Terraform directory
 
     Write-Host "Application deployment initiated" -ForegroundColor Green

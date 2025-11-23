@@ -1,0 +1,10 @@
+{
+    "commands":  [
+                     "Import-Module ActiveDirectory",
+                     "$adminUser = \"Admin\"",
+                     "$adminPass = ConvertTo-SecureString \"8u4\u0026jP2#mK9$vL1@wX7!qR6\" -AsPlainText -Force",
+                     "$credential = New-Object System.Management.Automation.PSCredential($adminUser, $adminPass)",
+                     "Get-ADComputer -Identity \"WS-EMP-TEST\" -Server innovatech.local -Credential $credential | Remove-ADComputer -Confirm:$false -Credential $credential",
+                     "Write-Host \"Computer account WS-EMP-TEST deleted\""
+                 ]
+}
