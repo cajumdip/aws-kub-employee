@@ -294,8 +294,9 @@ resource "aws_instance" "vpn" {
               SERVER_PRIVATE_KEY=$(cat server_private.key)
               SERVER_PUBLIC_KEY=$(cat server_public.key)
               
-              # Get the server's private IP
+              # Get the server's private IP (for reference)
               SERVER_IP=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+              echo "Server private IP: $SERVER_IP"
               
               # Create server configuration
               cat > /etc/wireguard/wg0.conf <<'WGCONF'
@@ -318,26 +319,35 @@ resource "aws_instance" "vpn" {
                 CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
                 
                 # Add client to server config
-                cat >> /etc/wireguard/wg0.conf <<PEER
+                cat >> /etc/wireguard/wg0.conf <<'PEER'
               
               [Peer]
-              PublicKey = $CLIENT_PUBLIC_KEY
-              AllowedIPs = 10.200.200.$((i+1))/32
+              PublicKey = CLIENT_PUBLIC_KEY_PLACEHOLDER
+              AllowedIPs = 10.200.200.CLIENT_IP_PLACEHOLDER/32
               PEER
                 
+                # Replace placeholders in server config
+                sed -i "s|CLIENT_PUBLIC_KEY_PLACEHOLDER|$CLIENT_PUBLIC_KEY|g" /etc/wireguard/wg0.conf
+                sed -i "s|CLIENT_IP_PLACEHOLDER|$((i+1))|g" /etc/wireguard/wg0.conf
+                
                 # Create client config
-                cat > /etc/wireguard/clients/client$i.conf <<CLIENT
+                cat > /etc/wireguard/clients/client$i.conf <<'CLIENT'
               [Interface]
-              PrivateKey = $CLIENT_PRIVATE_KEY
-              Address = 10.200.200.$((i+1))/24
+              PrivateKey = CLIENT_PRIVATE_KEY_PLACEHOLDER
+              Address = 10.200.200.CLIENT_IP_PLACEHOLDER/24
               DNS = 10.0.10.225, 10.0.11.177
               
               [Peer]
-              PublicKey = $SERVER_PUBLIC_KEY
+              PublicKey = SERVER_PUBLIC_KEY_PLACEHOLDER
               Endpoint = VPN_PUBLIC_IP_PLACEHOLDER:51820
               AllowedIPs = 10.0.0.0/16, 10.200.200.0/24
               PersistentKeepalive = 25
               CLIENT
+                
+                # Replace placeholders in client config
+                sed -i "s|CLIENT_PRIVATE_KEY_PLACEHOLDER|$CLIENT_PRIVATE_KEY|g" /etc/wireguard/clients/client$i.conf
+                sed -i "s|CLIENT_IP_PLACEHOLDER|$((i+1))|g" /etc/wireguard/clients/client$i.conf
+                sed -i "s|SERVER_PUBLIC_KEY_PLACEHOLDER|$SERVER_PUBLIC_KEY|g" /etc/wireguard/clients/client$i.conf
                 
                 # Generate QR code for mobile clients
                 qrencode -t ansiutf8 < /etc/wireguard/clients/client$i.conf > /etc/wireguard/clients/client$i-qr.txt

@@ -37,6 +37,11 @@ DIRECTORY_NAME = os.environ.get('DIRECTORY_NAME', 'innovatech.local')
 AD_SECRET_ARN = os.environ.get('AD_SECRET_ARN')
 DOMAIN_JOIN_DOC = os.environ.get('DOMAIN_JOIN_DOC')
 
+# Offboarding cleanup constants
+AWS_CLEANUP_DELAY_SECONDS = 3
+MAX_ENI_CLEANUP_RETRIES = 5
+INITIAL_RETRY_DELAY_SECONDS = 2
+
 workstations_table = dynamodb.Table(WORKSTATIONS_TABLE)
 
 def handler(event, context):
@@ -137,7 +142,9 @@ def handle_offboarding(record):
         
         instance_id = workstation_data.get('instance_id')
         iam_username = workstation_data.get('iam_username')
-        ad_username = workstation_data.get('ad_username', '').split('\\')[-1]  # Extract username from domain\username
+        ad_username_full = workstation_data.get('ad_username', '')
+        # Extract username from domain\username format (e.g., "innovatech.local\john.doe" -> "john.doe")
+        ad_username = ad_username_full.split('\\')[-1] if '\\' in ad_username_full else ad_username_full
         
         # 1. Delete IAM User and Access Keys
         if iam_username:
@@ -223,7 +230,7 @@ def handle_offboarding(record):
                 # Check for and delete any lingering network interfaces
                 try:
                     # Small delay to allow AWS to begin cleanup
-                    time.sleep(3)
+                    time.sleep(AWS_CLEANUP_DELAY_SECONDS)
                     
                     # Get instance details to find network interfaces
                     instance_details = ec2.describe_instances(InstanceIds=[instance_id])
@@ -233,9 +240,8 @@ def handle_offboarding(record):
                                 eni_id = eni.get('NetworkInterfaceId')
                                 if eni_id and not eni.get('Attachment', {}).get('DeleteOnTermination', True):
                                     # Wait for ENI to be available for deletion with exponential backoff
-                                    max_retries = 5
-                                    retry_delay = 2
-                                    for attempt in range(max_retries):
+                                    retry_delay = INITIAL_RETRY_DELAY_SECONDS
+                                    for attempt in range(MAX_ENI_CLEANUP_RETRIES):
                                         try:
                                             # Check ENI status
                                             eni_desc = ec2.describe_network_interfaces(NetworkInterfaceIds=[eni_id])
@@ -254,8 +260,8 @@ def handle_offboarding(record):
                                             if e.response['Error']['Code'] == 'InvalidNetworkInterfaceID.NotFound':
                                                 print(f"   ✓ Network interface {eni_id} already deleted")
                                                 break
-                                            elif attempt < max_retries - 1:
-                                                print(f"   ⏳ ENI cleanup retry {attempt + 1}/{max_retries}")
+                                            elif attempt < MAX_ENI_CLEANUP_RETRIES - 1:
+                                                print(f"   ⏳ ENI cleanup retry {attempt + 1}/{MAX_ENI_CLEANUP_RETRIES}")
                                                 time.sleep(retry_delay)
                                                 retry_delay *= 2
                                             else:
