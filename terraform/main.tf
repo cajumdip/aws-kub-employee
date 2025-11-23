@@ -60,6 +60,22 @@ data "aws_ami" "amazon_linux_2" {
   }
 }
 
+# Find the latest Ubuntu 22.04 ARM64 AMI for VPN instance
+data "aws_ami" "ubuntu_arm64" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-arm64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 # ===== VPC and Networking =====
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
@@ -195,6 +211,198 @@ resource "aws_instance" "nat" {
 resource "aws_eip_association" "nat_instance" {
   instance_id   = aws_instance.nat.id
   allocation_id = aws_eip.nat_instance.id
+}
+
+# ===== VPN Instance (WireGuard) =====
+resource "aws_security_group" "vpn" {
+  count       = var.enable_vpn ? 1 : 0
+  name        = "${var.project_name}-vpn-sg"
+  description = "Security group for WireGuard VPN server"
+  vpc_id      = aws_vpc.main.id
+
+  # WireGuard port
+  ingress {
+    from_port   = 51820
+    to_port     = 51820
+    protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "WireGuard VPN"
+  }
+
+  # SSH access from admin IP only
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.admin_ip_cidr]
+    description = "SSH access from admin IP"
+  }
+
+  # Allow all outbound
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound"
+  }
+
+  tags = {
+    Name = "${var.project_name}-vpn-sg"
+  }
+}
+
+resource "aws_eip" "vpn" {
+  count  = var.enable_vpn ? 1 : 0
+  domain = "vpc"
+  tags = {
+    Name = "${var.project_name}-vpn-eip"
+  }
+  depends_on = [aws_internet_gateway.main]
+}
+
+resource "aws_instance" "vpn" {
+  count                       = var.enable_vpn ? 1 : 0
+  ami                         = data.aws_ami.ubuntu_arm64.id
+  instance_type              = var.vpn_instance_type
+  subnet_id                  = aws_subnet.public[0].id
+  vpc_security_group_ids     = [aws_security_group.vpn[0].id]
+  associate_public_ip_address = true
+  source_dest_check          = false
+
+  user_data = <<-EOF
+              #!/bin/bash
+              set -e
+              
+              # Update system
+              apt-get update
+              apt-get upgrade -y
+              
+              # Install WireGuard
+              apt-get install -y wireguard qrencode
+              
+              # Enable IP forwarding
+              echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+              echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
+              sysctl -p
+              
+              # Generate server keys
+              cd /etc/wireguard
+              umask 077
+              wg genkey | tee server_private.key | wg pubkey > server_public.key
+              
+              SERVER_PRIVATE_KEY=$(cat server_private.key)
+              SERVER_PUBLIC_KEY=$(cat server_public.key)
+              
+              # Get the server's private IP
+              SERVER_IP=$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+              
+              # Create server configuration
+              cat > /etc/wireguard/wg0.conf <<'WGCONF'
+              [Interface]
+              Address = 10.200.200.1/24
+              ListenPort = 51820
+              PrivateKey = SERVER_PRIVATE_KEY_PLACEHOLDER
+              PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+              PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+              WGCONF
+              
+              # Replace placeholder with actual key
+              sed -i "s|SERVER_PRIVATE_KEY_PLACEHOLDER|$SERVER_PRIVATE_KEY|g" /etc/wireguard/wg0.conf
+              
+              # Generate client configurations
+              mkdir -p /etc/wireguard/clients
+              
+              for i in {1..${var.vpn_client_count}}; do
+                CLIENT_PRIVATE_KEY=$(wg genkey)
+                CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
+                
+                # Add client to server config
+                cat >> /etc/wireguard/wg0.conf <<PEER
+              
+              [Peer]
+              PublicKey = $CLIENT_PUBLIC_KEY
+              AllowedIPs = 10.200.200.$((i+1))/32
+              PEER
+                
+                # Create client config
+                cat > /etc/wireguard/clients/client$i.conf <<CLIENT
+              [Interface]
+              PrivateKey = $CLIENT_PRIVATE_KEY
+              Address = 10.200.200.$((i+1))/24
+              DNS = 10.0.10.225, 10.0.11.177
+              
+              [Peer]
+              PublicKey = $SERVER_PUBLIC_KEY
+              Endpoint = VPN_PUBLIC_IP_PLACEHOLDER:51820
+              AllowedIPs = 10.0.0.0/16, 10.200.200.0/24
+              PersistentKeepalive = 25
+              CLIENT
+                
+                # Generate QR code for mobile clients
+                qrencode -t ansiutf8 < /etc/wireguard/clients/client$i.conf > /etc/wireguard/clients/client$i-qr.txt
+              done
+              
+              # Enable and start WireGuard
+              systemctl enable wg-quick@wg0
+              systemctl start wg-quick@wg0
+              
+              # Create a script to update client configs with the actual EIP
+              cat > /usr/local/bin/update-vpn-configs.sh <<'UPDATESCRIPT'
+              #!/bin/bash
+              # This script updates client configs with the actual public IP
+              # Run this after the EIP is associated
+              
+              if [ -z "$1" ]; then
+                echo "Usage: $0 <public_ip>"
+                exit 1
+              fi
+              
+              PUBLIC_IP=$1
+              
+              for conf in /etc/wireguard/clients/client*.conf; do
+                if [ -f "$conf" ]; then
+                  sed -i "s|VPN_PUBLIC_IP_PLACEHOLDER|$PUBLIC_IP|g" "$conf"
+                  # Regenerate QR code
+                  qrencode -t ansiutf8 < "$conf" > "$${conf%.conf}-qr.txt"
+                fi
+              done
+              
+              echo "Updated all client configurations with public IP: $PUBLIC_IP"
+              UPDATESCRIPT
+              
+              chmod +x /usr/local/bin/update-vpn-configs.sh
+              
+              # Install CloudWatch agent for monitoring
+              wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb
+              dpkg -i -E ./amazon-cloudwatch-agent.deb
+              
+              echo "VPN setup complete. Server public key: $SERVER_PUBLIC_KEY"
+              EOF
+
+  tags = {
+    Name = "${var.project_name}-vpn-server"
+  }
+
+  depends_on = [aws_internet_gateway.main]
+}
+
+resource "aws_eip_association" "vpn" {
+  count         = var.enable_vpn ? 1 : 0
+  instance_id   = aws_instance.vpn[0].id
+  allocation_id = aws_eip.vpn[0].id
+}
+
+# Update workstation security group to allow RDP from VPN
+resource "aws_security_group_rule" "workstation_rdp_from_vpn" {
+  count                    = var.enable_vpn ? 1 : 0
+  type                     = "ingress"
+  from_port                = 3389
+  to_port                  = 3389
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.vpn[0].id
+  security_group_id        = aws_security_group.workstations.id
+  description              = "RDP from VPN"
 }
 
 # ===== Route Tables =====
