@@ -6,6 +6,7 @@ RUN mkdir -p /var/cache/nginx/client_temp \
     /var/cache/nginx/fastcgi_temp \
     /var/cache/nginx/uwsgi_temp \
     /var/cache/nginx/scgi_temp \
+    /var/cache/nginx/config \
     /var/run \
     /tmp \
     && chown -R nginx:nginx /var/cache/nginx \
@@ -36,4 +37,5 @@ EXPOSE 8080
 USER nginx
 
 # Use envsubst to replace environment variables in nginx config, then start nginx
-CMD ["/bin/sh", "-c", "envsubst '$COGNITO_USER_POOL_ID $COGNITO_CLIENT_ID $COGNITO_REGION' < /etc/nginx/nginx.conf.template > /tmp/nginx.conf && nginx -c /tmp/nginx.conf -g 'daemon off;'"]
+# Using /var/cache/nginx/config which is owned by nginx for security
+CMD ["/bin/sh", "-c", "envsubst '$COGNITO_USER_POOL_ID $COGNITO_CLIENT_ID $COGNITO_REGION' < /etc/nginx/nginx.conf.template > /var/cache/nginx/config/nginx.conf && nginx -c /var/cache/nginx/config/nginx.conf -g 'daemon off;'"]

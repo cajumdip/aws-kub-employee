@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 import jwt
+from jwt.algorithms import RSAAlgorithm
 import requests
 from functools import wraps
 import time
@@ -25,6 +26,9 @@ COGNITO_REGION = os.environ.get('COGNITO_REGION', os.environ.get('AWS_REGION', '
 COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID', '')
 COGNITO_APP_CLIENT_ID = os.environ.get('COGNITO_APP_CLIENT_ID', '')
 COGNITO_KEYS_URL = f'https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}/.well-known/jwks.json'
+
+# Development mode flag - only allow bypassing auth when explicitly enabled
+DEV_MODE = os.environ.get('DEV_MODE', '').lower() == 'true'
 
 # Initialize Cognito client for user management
 cognito_client = boto3.client('cognito-idp', region_name=COGNITO_REGION)
@@ -98,7 +102,6 @@ def verify_token(token):
             return None
         
         # Construct the public key
-        from jwt.algorithms import RSAAlgorithm
         public_key = RSAAlgorithm.from_jwk(key)
         
         # Verify and decode the token
@@ -130,11 +133,18 @@ def require_auth(allowed_groups=None):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            # Skip auth if Cognito is not configured (for development)
+            # Skip auth if Cognito is not configured AND DEV_MODE is explicitly enabled
             if not COGNITO_USER_POOL_ID:
-                app.logger.warning("Cognito not configured, skipping authentication")
-                g.user = {'email': 'dev@localhost', 'groups': ['HR-Admins']}
-                return f(*args, **kwargs)
+                if DEV_MODE:
+                    app.logger.warning("DEV_MODE enabled: Cognito not configured, skipping authentication")
+                    g.user = {'email': 'dev@localhost', 'groups': ['HR-Admins']}
+                    return f(*args, **kwargs)
+                else:
+                    app.logger.error("Cognito not configured and DEV_MODE is not enabled")
+                    return jsonify({
+                        'success': False,
+                        'error': 'Authentication service not configured'
+                    }), 503
             
             # Get token from Authorization header
             auth_header = request.headers.get('Authorization', '')
@@ -549,12 +559,6 @@ def create_hr_user():
             DesiredDeliveryMediums=['EMAIL'],
             ForceAliasCreation=False
         )
-        
-        # Get the temporary password from response
-        temp_password = None
-        for attr in response.get('User', {}).get('Attributes', []):
-            if attr.get('Name') == 'sub':
-                user_sub = attr.get('Value')
         
         # Add user to HR-Admins group
         cognito_client.admin_add_user_to_group(

@@ -854,12 +854,10 @@
             loginBtn.textContent = 'Signing in...';
             loginError.style.display = 'none';
 
-            // If Cognito is not configured, allow development mode access
+            // If Cognito is not configured, show error (no dev bypass in production)
             if (!userPool) {
-                console.log('Development mode: Bypassing Cognito authentication');
-                authToken = 'dev-token';
-                currentUser = { email: email };
-                showMainPortal();
+                loginError.textContent = 'Authentication service is not configured. Please contact your administrator.';
+                loginError.style.display = 'block';
                 loginBtn.disabled = false;
                 loginBtn.textContent = 'Sign In';
                 return;
@@ -943,9 +941,14 @@
                 return;
             }
             
-            // Validate password requirements
-            const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{}|;':",.<>\/?]).{8,}$/;
-            if (!passwordRegex.test(newPassword)) {
+            // Validate password requirements with clearer individual checks
+            const hasMinLength = newPassword.length >= 8;
+            const hasLowercase = /[a-z]/.test(newPassword);
+            const hasUppercase = /[A-Z]/.test(newPassword);
+            const hasNumber = /\d/.test(newPassword);
+            const hasSymbol = /[!@#$%^&*()_+\-=\[\]{}|;':",.<>\/?]/.test(newPassword);
+            
+            if (!hasMinLength || !hasLowercase || !hasUppercase || !hasNumber || !hasSymbol) {
                 newPasswordError.textContent = 'Password must be at least 8 characters with uppercase, lowercase, number, and symbol.';
                 newPasswordError.style.display = 'block';
                 return;
