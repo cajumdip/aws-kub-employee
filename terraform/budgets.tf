@@ -1,5 +1,6 @@
 # budgets.tf - AWS Budgets for Cost Management
 # Fulfills academic requirement for cost monitoring and alerts
+# Note: Uses data.aws_caller_identity.current from main.tf
 
 # ===== Monthly AWS Budget =====
 resource "aws_budgets_budget" "monthly" {

@@ -19,8 +19,10 @@ resource "aws_sns_topic_subscription" "monitoring_email" {
 # ===== CloudWatch Log Groups =====
 
 # Lambda Log Group
+# Note: Lambda automatically creates its log group on first invocation.
+# This resource ensures the log group exists with the correct retention policy.
 resource "aws_cloudwatch_log_group" "lambda_onboarding" {
-  name              = "/aws/lambda/${aws_lambda_function.onboarding.function_name}"
+  name              = "/aws/lambda/${var.project_name}-onboarding-automation"
   retention_in_days = var.log_retention_days
 
   tags = {
@@ -94,7 +96,7 @@ resource "aws_cloudwatch_metric_alarm" "ec2_cpu_high" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    AutoScalingGroupName = "${var.project_name}-node-group"
+    AutoScalingGroupName = aws_eks_node_group.main.resources[0].autoscaling_groups[0].name
   }
 
   alarm_actions = [aws_sns_topic.monitoring_alerts.arn]
@@ -460,6 +462,7 @@ resource "aws_cloudwatch_dashboard" "main" {
       },
 
       # Row 5: Cost Monitoring
+      # Note: AWS Billing metrics are only available in us-east-1 region
       {
         type   = "text"
         x      = 0
@@ -477,7 +480,8 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 12
         height = 6
         properties = {
-          title  = "Estimated AWS Charges (USD)"
+          title = "Estimated AWS Charges (USD)"
+          # AWS Billing metrics are only available in us-east-1 region
           region = "us-east-1"
           metrics = [
             ["AWS/Billing", "EstimatedCharges", "Currency", "USD", { stat = "Maximum", period = 86400 }]
@@ -493,7 +497,8 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 12
         height = 6
         properties = {
-          title  = "Daily Cost Trend"
+          title = "Daily Cost Trend"
+          # AWS Billing metrics are only available in us-east-1 region
           region = "us-east-1"
           metrics = [
             ["AWS/Billing", "EstimatedCharges", "Currency", "USD", { stat = "Maximum", period = 86400 }]
