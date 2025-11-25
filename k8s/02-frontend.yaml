@@ -25,6 +25,22 @@ spec:
         image: 143858013937.dkr.ecr.eu-central-1.amazonaws.com/innovatech-frontend-app:latest
         ports:
         - containerPort: 8080
+        env:
+        - name: COGNITO_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: cognito-config
+              key: region
+        - name: COGNITO_USER_POOL_ID
+          valueFrom:
+            configMapKeyRef:
+              name: cognito-config
+              key: user_pool_id
+        - name: COGNITO_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: cognito-config
+              key: app_client_id
         resources:
           requests:
             memory: "128Mi"

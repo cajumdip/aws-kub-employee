@@ -37,6 +37,21 @@ spec:
           value: innovatech-employees
         - name: AWS_REGION
           value: eu-central-1
+        - name: COGNITO_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: cognito-config
+              key: region
+        - name: COGNITO_USER_POOL_ID
+          valueFrom:
+            configMapKeyRef:
+              name: cognito-config
+              key: user_pool_id
+        - name: COGNITO_APP_CLIENT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: cognito-config
+              key: app_client_id
         resources:
           requests:
             memory: "256Mi"

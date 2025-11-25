@@ -70,3 +70,9 @@ variable "vpn_client_count" {
   type        = number
   default     = 5
 }
+
+variable "admin_email" {
+  description = "Email for initial Cognito admin user"
+  type        = string
+  default     = "admin@innovatech.com"
+}
