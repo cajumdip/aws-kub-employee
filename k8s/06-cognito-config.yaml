@@ -1,0 +1,14 @@
+---
+# ConfigMap for Cognito Configuration
+# NOTE: Update these values after running terraform apply
+# Use: terraform output cognito_user_pool_id, terraform output cognito_client_id
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cognito-config
+  namespace: innovatech-app
+data:
+  # Replace these placeholder values with actual Cognito outputs from Terraform
+  user_pool_id: "PLACEHOLDER_USER_POOL_ID"
+  app_client_id: "PLACEHOLDER_APP_CLIENT_ID"
+  region: "eu-central-1"

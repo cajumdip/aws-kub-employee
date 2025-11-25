@@ -120,3 +120,35 @@ output "vpn_ssh_key_path" {
   value       = var.enable_vpn ? abspath(local_file.vpn_private_key[0].filename) : "VPN not enabled"
   sensitive   = true
 }
+
+# ===== Cognito Outputs =====
+output "cognito_user_pool_id" {
+  description = "Cognito User Pool ID"
+  value       = aws_cognito_user_pool.hr_portal.id
+}
+
+output "cognito_client_id" {
+  description = "Cognito App Client ID"
+  value       = aws_cognito_user_pool_client.hr_portal.id
+}
+
+output "cognito_domain" {
+  description = "Cognito User Pool Domain"
+  value       = aws_cognito_user_pool_domain.hr_portal.domain
+}
+
+output "cognito_region" {
+  description = "AWS Region for Cognito"
+  value       = var.aws_region
+}
+
+output "initial_admin_email" {
+  description = "Email for initial admin user"
+  value       = var.admin_email
+}
+
+output "initial_admin_password" {
+  description = "Initial temporary password for admin user (must be changed on first login)"
+  value       = random_password.admin_initial_password.result
+  sensitive   = true
+}

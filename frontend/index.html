@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Innovatech Employee Portal</title>
+    <!-- Cognito Configuration (injected by nginx from environment variables) -->
+    <script src="/config.js"></script>
+    <!-- Amazon Cognito Identity SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.0.1/dist/amazon-cognito-identity.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -30,6 +34,28 @@
             border: 2px solid #1a3a52;
             padding: 20px;
             margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-left {
+            flex: 1;
+        }
+
+        .header-right {
+            text-align: right;
+        }
+
+        .user-info {
+            color: #a8c8e0;
+            font-size: 11px;
+            margin-bottom: 5px;
+        }
+
+        .user-email {
+            color: #fff;
+            font-weight: bold;
         }
 
         h1 {
@@ -74,6 +100,97 @@
             margin-bottom: 12px;
             padding-bottom: 5px;
             border-bottom: 2px solid #7db9e8;
+        }
+
+        /* Login Page Styles */
+        #loginContainer {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #e8f0f5;
+        }
+
+        .login-box {
+            background: #ffffff;
+            border: 3px solid #2b5278;
+            padding: 30px;
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .login-header {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 24px;
+            color: #2b5278;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+
+        .login-subtitle {
+            color: #666;
+            margin-bottom: 20px;
+            font-size: 12px;
+        }
+
+        .login-form label {
+            display: block;
+            text-align: left;
+            color: #2b5278;
+            font-weight: bold;
+            margin-bottom: 5px;
+            margin-top: 15px;
+        }
+
+        .login-form input[type="email"],
+        .login-form input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #7db9e8;
+            font-size: 12px;
+            font-family: Verdana, Arial, Helvetica, sans-serif;
+        }
+
+        .login-form input:focus {
+            outline: none;
+            border-color: #2b5278;
+        }
+
+        .login-error {
+            background: #f8d7da;
+            border: 1px solid #cc3333;
+            color: #721c24;
+            padding: 10px;
+            margin-top: 15px;
+            display: none;
+            font-size: 11px;
+        }
+
+        .login-button {
+            width: 100%;
+            padding: 12px;
+            background: #2b5278;
+            border: 2px solid #1a3a52;
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        .login-button:hover {
+            background: #3a6a98;
+        }
+
+        .login-button:disabled {
+            background: #999;
+            cursor: not-allowed;
+        }
+
+        /* Main Portal Hidden Initially */
+        #mainPortal {
+            display: none;
         }
 
         .stats-container {
@@ -184,6 +301,17 @@
         .button-small {
             padding: 4px 12px;
             font-size: 10px;
+        }
+
+        .button-logout {
+            background: #666;
+            border: 2px solid #444;
+            padding: 6px 12px;
+            font-size: 10px;
+        }
+
+        .button-logout:hover {
+            background: #888;
         }
 
         .employee-grid {
@@ -313,6 +441,10 @@
             border-bottom: 2px solid #7db9e8;
         }
 
+        .modal-header-blue {
+            color: #2b5278;
+        }
+
         .modal-body {
             color: #333;
             margin-bottom: 15px;
@@ -342,6 +474,66 @@
             background: #ffffff;
         }
 
+        /* HR User Management Styles */
+        .hr-user-item {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .hr-user-info {
+            flex: 1;
+        }
+
+        .hr-user-email {
+            font-weight: bold;
+            color: #2b5278;
+        }
+
+        .hr-user-status {
+            font-size: 10px;
+            color: #666;
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #7db9e8;
+            margin-bottom: 15px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            background: #e8f4f8;
+            border: 2px solid #7db9e8;
+            border-bottom: none;
+            margin-right: 5px;
+            font-weight: bold;
+            color: #2b5278;
+        }
+
+        .tab.active {
+            background: #fff;
+            border-bottom: 2px solid #fff;
+            margin-bottom: -2px;
+        }
+
+        .tab:hover:not(.active) {
+            background: #d0e8f0;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
         @media (max-width: 768px) {
             .stats-row,
             .employee-grid {
@@ -354,89 +546,186 @@
                 width: 100%;
                 margin-bottom: 10px;
             }
+
+            #header {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .header-right {
+                text-align: center;
+                margin-top: 15px;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div id="header">
-            <h1>Innovatech<span>Portal</span></h1>
-            <div id="tagline">Employee Management System</div>
+    <!-- Login Container -->
+    <div id="loginContainer">
+        <div class="login-box">
+            <div class="login-header">Innovatech<span style="color: #7db9e8;">Portal</span></div>
+            <div class="login-subtitle">HR Employee Management System</div>
+            
+            <!-- Login Form -->
+            <form id="loginForm" class="login-form">
+                <label for="loginEmail">Email Address</label>
+                <input type="email" id="loginEmail" required placeholder="admin@innovatech.com">
+                
+                <label for="loginPassword">Password</label>
+                <input type="password" id="loginPassword" required placeholder="Enter your password">
+                
+                <div id="loginError" class="login-error"></div>
+                
+                <button type="submit" class="login-button" id="loginBtn">Sign In</button>
+            </form>
+            
+            <!-- New Password Form (Hidden) -->
+            <form id="newPasswordForm" class="login-form" style="display: none;">
+                <p style="color: #666; margin-bottom: 15px; font-size: 12px;">
+                    You must change your password before continuing.
+                </p>
+                
+                <label for="newPassword">New Password</label>
+                <input type="password" id="newPassword" required placeholder="Enter new password">
+                
+                <label for="confirmPassword">Confirm Password</label>
+                <input type="password" id="confirmPassword" required placeholder="Confirm new password">
+                
+                <p style="color: #888; font-size: 10px; margin-top: 10px; text-align: left;">
+                    Password must be at least 8 characters with uppercase, lowercase, number, and symbol.
+                </p>
+                
+                <div id="newPasswordError" class="login-error"></div>
+                
+                <button type="submit" class="login-button" id="changePasswordBtn">Change Password</button>
+            </form>
         </div>
+    </div>
 
-        <div class="nav-bar">
-            Employee Management Dashboard
-        </div>
+    <!-- Main Portal (Hidden Until Login) -->
+    <div id="mainPortal">
+        <div class="container">
+            <div id="header">
+                <div class="header-left">
+                    <h1>Innovatech<span>Portal</span></h1>
+                    <div id="tagline">Employee Management System</div>
+                </div>
+                <div class="header-right">
+                    <div class="user-info">Logged in as: <span class="user-email" id="currentUserEmail"></span></div>
+                    <button class="button button-logout" onclick="logout()">Logout</button>
+                </div>
+            </div>
 
-        <div id="alertContainer"></div>
+            <div class="nav-bar">
+                <div class="tabs" style="border: none; margin: 0; justify-content: center; background: transparent;">
+                    <div class="tab active" onclick="switchTab('employees')" id="tabEmployees" style="background: #fff; border: none;">Employee Management</div>
+                    <div class="tab" onclick="switchTab('hr-users')" id="tabHrUsers" style="background: #5a9dd1; border: none; color: #fff;">HR User Management</div>
+                </div>
+            </div>
 
-        <!-- Stats -->
-        <div class="stats-container">
-            <div class="stats-row">
-                <div class="stat-cell">
-                    <div class="stat-box">
-                        <span class="stat-number" id="totalEmployees">0</span>
-                        <div class="stat-label">Total Employees</div>
+            <div id="alertContainer"></div>
+
+            <!-- Employee Management Tab -->
+            <div id="employeesTab" class="tab-content active">
+                <!-- Stats -->
+                <div class="stats-container">
+                    <div class="stats-row">
+                        <div class="stat-cell">
+                            <div class="stat-box">
+                                <span class="stat-number" id="totalEmployees">0</span>
+                                <div class="stat-label">Total Employees</div>
+                            </div>
+                        </div>
+                        <div class="stat-cell">
+                            <div class="stat-box">
+                                <span class="stat-number" id="activeEmployees">0</span>
+                                <div class="stat-label">Active</div>
+                            </div>
+                        </div>
+                        <div class="stat-cell">
+                            <div class="stat-box">
+                                <span class="stat-number" id="totalWorkstations">0</span>
+                                <div class="stat-label">Workstations</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="stat-cell">
-                    <div class="stat-box">
-                        <span class="stat-number" id="activeEmployees">0</span>
-                        <div class="stat-label">Active</div>
-                    </div>
+
+                <!-- Add Employee -->
+                <div class="content-box">
+                    <h2>Add New Employee</h2>
+                    <form id="employeeForm">
+                        <table class="form-table">
+                            <tr>
+                                <td width="50%">
+                                    <label for="name">Full Name</label>
+                                    <input type="text" id="name" required placeholder="John Doe">
+                                </td>
+                                <td width="50%">
+                                    <label for="email">Email Address</label>
+                                    <input type="email" id="email" required placeholder="john.doe@innovatech.com">
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <label for="department">Department</label>
+                                    <select id="department" required>
+                                        <option value="">Select Department</option>
+                                        <option value="Engineering">Engineering</option>
+                                        <option value="Marketing">Marketing</option>
+                                        <option value="Sales">Sales</option>
+                                        <option value="HR">HR</option>
+                                        <option value="Finance">Finance</option>
+                                        <option value="Operations">Operations</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <label for="role">Role</label>
+                                    <input type="text" id="role" required placeholder="Senior Developer">
+                                </td>
+                            </tr>
+                        </table>
+                        <button type="submit" class="button">Add Employee</button>
+                    </form>
                 </div>
-                <div class="stat-cell">
-                    <div class="stat-box">
-                        <span class="stat-number" id="totalWorkstations">0</span>
-                        <div class="stat-label">Workstations</div>
+
+                <!-- Employee Directory -->
+                <div class="content-box">
+                    <h2>Employee Directory</h2>
+                    <div id="employeeList">
+                        <div class="loading">Loading employees...</div>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Add Employee -->
-        <div class="content-box">
-            <h2>Add New Employee</h2>
-            <form id="employeeForm">
-                <table class="form-table">
-                    <tr>
-                        <td width="50%">
-                            <label for="name">Full Name</label>
-                            <input type="text" id="name" required placeholder="John Doe">
-                        </td>
-                        <td width="50%">
-                            <label for="email">Email Address</label>
-                            <input type="email" id="email" required placeholder="john.doe@innovatech.com">
-                        </td>
-                    </tr>
-                    <tr>
-                        <td>
-                            <label for="department">Department</label>
-                            <select id="department" required>
-                                <option value="">Select Department</option>
-                                <option value="Engineering">Engineering</option>
-                                <option value="Marketing">Marketing</option>
-                                <option value="Sales">Sales</option>
-                                <option value="HR">HR</option>
-                                <option value="Finance">Finance</option>
-                                <option value="Operations">Operations</option>
-                            </select>
-                        </td>
-                        <td>
-                            <label for="role">Role</label>
-                            <input type="text" id="role" required placeholder="Senior Developer">
-                        </td>
-                    </tr>
-                </table>
-                <button type="submit" class="button">Add Employee</button>
-            </form>
-        </div>
+            <!-- HR User Management Tab -->
+            <div id="hrUsersTab" class="tab-content">
+                <div class="content-box">
+                    <h2>Add New HR User</h2>
+                    <form id="hrUserForm">
+                        <table class="form-table">
+                            <tr>
+                                <td width="50%">
+                                    <label for="hrUserEmail">Email Address</label>
+                                    <input type="email" id="hrUserEmail" required placeholder="hr.admin@innovatech.com">
+                                </td>
+                                <td width="50%">
+                                    <p style="color: #666; font-size: 10px; margin-top: 20px;">
+                                        A temporary password will be sent to this email. The user will be required to change it on first login.
+                                    </p>
+                                </td>
+                            </tr>
+                        </table>
+                        <button type="submit" class="button">Create HR User</button>
+                    </form>
+                </div>
 
-        <!-- Employee Directory -->
-        <div class="content-box">
-            <h2>Employee Directory</h2>
-            <div id="employeeList">
-                <div class="loading">Loading employees...</div>
+                <div class="content-box">
+                    <h2>HR Users (HR-Admins Group)</h2>
+                    <div id="hrUserList">
+                        <div class="loading">Loading HR users...</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -463,9 +752,304 @@
         </div>
     </div>
 
+    <!-- Delete HR User Modal -->
+    <div id="deleteHrUserModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Confirm HR User Deletion</div>
+            <div class="modal-body">
+                <p><strong id="deleteHrUserMessage">Are you sure you want to remove this HR user?</strong></p>
+                <p style="margin-top: 12px; color: #cc3333; font-weight: bold;">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="button" onclick="closeDeleteHrUserModal()">Cancel</button>
+                <button class="button button-delete" id="confirmDeleteHrUserBtn">Delete HR User</button>
+            </div>
+        </div>
+    </div>
+
     <script>
+        // ===== Cognito Configuration =====
+        // These values should be injected from the ConfigMap or set during deployment
+        const COGNITO_CONFIG = {
+            UserPoolId: window.COGNITO_USER_POOL_ID || '',
+            ClientId: window.COGNITO_CLIENT_ID || '',
+            Region: window.COGNITO_REGION || 'eu-central-1'
+        };
+
         const API_URL = '/api';
         let currentDeleteId = null;
+        let currentDeleteHrUser = null;
+        let authToken = null;
+        let currentUser = null;
+        let cognitoUser = null;
+        let userPool = null;
+        let refreshInterval = null;
+
+        // Initialize Cognito User Pool
+        function initCognito() {
+            if (COGNITO_CONFIG.UserPoolId && COGNITO_CONFIG.ClientId && window.AmazonCognitoIdentity) {
+                const poolData = {
+                    UserPoolId: COGNITO_CONFIG.UserPoolId,
+                    ClientId: COGNITO_CONFIG.ClientId
+                };
+                userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+                
+                // Check for existing session
+                const cognitoUserStored = userPool.getCurrentUser();
+                if (cognitoUserStored) {
+                    cognitoUserStored.getSession((err, session) => {
+                        if (!err && session && session.isValid()) {
+                            cognitoUser = cognitoUserStored;
+                            authToken = session.getIdToken().getJwtToken();
+                            currentUser = {
+                                email: session.getIdToken().payload.email || cognitoUserStored.getUsername()
+                            };
+                            showMainPortal();
+                        }
+                    });
+                }
+            } else {
+                console.log('Cognito SDK not loaded or not configured. Running in development mode.');
+            }
+        }
+
+        // Show login page
+        function showLoginPage() {
+            document.getElementById('loginContainer').style.display = 'flex';
+            document.getElementById('mainPortal').style.display = 'none';
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('newPasswordForm').style.display = 'none';
+            document.getElementById('loginError').style.display = 'none';
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+        }
+
+        // Show main portal
+        function showMainPortal() {
+            document.getElementById('loginContainer').style.display = 'none';
+            document.getElementById('mainPortal').style.display = 'block';
+            document.getElementById('currentUserEmail').textContent = currentUser ? currentUser.email : 'Unknown';
+            loadEmployees();
+            loadHrUsers();
+            
+            // Refresh data every 30 seconds
+            if (refreshInterval) clearInterval(refreshInterval);
+            refreshInterval = setInterval(() => {
+                loadEmployees();
+            }, 30000);
+        }
+
+        // Login handler
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            const loginBtn = document.getElementById('loginBtn');
+            const loginError = document.getElementById('loginError');
+            
+            loginBtn.disabled = true;
+            loginBtn.textContent = 'Signing in...';
+            loginError.style.display = 'none';
+
+            // If Cognito is not configured, show error (no dev bypass in production)
+            if (!userPool) {
+                loginError.textContent = 'Authentication service is not configured. Please contact your administrator.';
+                loginError.style.display = 'block';
+                loginBtn.disabled = false;
+                loginBtn.textContent = 'Sign In';
+                return;
+            }
+
+            try {
+                const authenticationData = {
+                    Username: email,
+                    Password: password
+                };
+                const authenticationDetails = new AmazonCognitoIdentity.AuthenticationDetails(authenticationData);
+                
+                const userData = {
+                    Username: email,
+                    Pool: userPool
+                };
+                cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+                
+                cognitoUser.authenticateUser(authenticationDetails, {
+                    onSuccess: function(result) {
+                        authToken = result.getIdToken().getJwtToken();
+                        currentUser = {
+                            email: result.getIdToken().payload.email || email
+                        };
+                        
+                        // Check group membership
+                        const groups = result.getIdToken().payload['cognito:groups'] || [];
+                        if (!groups.includes('HR-Admins')) {
+                            loginError.textContent = 'Access denied. You are not a member of the HR-Admins group.';
+                            loginError.style.display = 'block';
+                            cognitoUser.signOut();
+                            loginBtn.disabled = false;
+                            loginBtn.textContent = 'Sign In';
+                            return;
+                        }
+                        
+                        showMainPortal();
+                        loginBtn.disabled = false;
+                        loginBtn.textContent = 'Sign In';
+                    },
+                    onFailure: function(err) {
+                        loginError.textContent = err.message || 'Authentication failed';
+                        loginError.style.display = 'block';
+                        loginBtn.disabled = false;
+                        loginBtn.textContent = 'Sign In';
+                    },
+                    newPasswordRequired: function(userAttributes, requiredAttributes) {
+                        // Store user attributes for password change
+                        delete userAttributes.email_verified;
+                        window.cognitoUserAttributes = userAttributes;
+                        
+                        // Show new password form
+                        document.getElementById('loginForm').style.display = 'none';
+                        document.getElementById('newPasswordForm').style.display = 'block';
+                        loginBtn.disabled = false;
+                        loginBtn.textContent = 'Sign In';
+                    }
+                });
+            } catch (err) {
+                loginError.textContent = err.message || 'An error occurred';
+                loginError.style.display = 'block';
+                loginBtn.disabled = false;
+                loginBtn.textContent = 'Sign In';
+            }
+        });
+
+        // New password handler
+        document.getElementById('newPasswordForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const changePasswordBtn = document.getElementById('changePasswordBtn');
+            const newPasswordError = document.getElementById('newPasswordError');
+            
+            newPasswordError.style.display = 'none';
+            
+            if (newPassword !== confirmPassword) {
+                newPasswordError.textContent = 'Passwords do not match';
+                newPasswordError.style.display = 'block';
+                return;
+            }
+            
+            // Validate password requirements with clearer individual checks
+            const hasMinLength = newPassword.length >= 8;
+            const hasLowercase = /[a-z]/.test(newPassword);
+            const hasUppercase = /[A-Z]/.test(newPassword);
+            const hasNumber = /\d/.test(newPassword);
+            const hasSymbol = /[!@#$%^&*()_+\-=\[\]{}|;':",.<>\/?]/.test(newPassword);
+            
+            if (!hasMinLength || !hasLowercase || !hasUppercase || !hasNumber || !hasSymbol) {
+                newPasswordError.textContent = 'Password must be at least 8 characters with uppercase, lowercase, number, and symbol.';
+                newPasswordError.style.display = 'block';
+                return;
+            }
+            
+            changePasswordBtn.disabled = true;
+            changePasswordBtn.textContent = 'Changing password...';
+            
+            try {
+                cognitoUser.completeNewPasswordChallenge(newPassword, window.cognitoUserAttributes || {}, {
+                    onSuccess: function(result) {
+                        authToken = result.getIdToken().getJwtToken();
+                        currentUser = {
+                            email: result.getIdToken().payload.email || cognitoUser.getUsername()
+                        };
+                        
+                        showMainPortal();
+                        showAlert('Password changed successfully!', 'success');
+                        changePasswordBtn.disabled = false;
+                        changePasswordBtn.textContent = 'Change Password';
+                    },
+                    onFailure: function(err) {
+                        newPasswordError.textContent = err.message || 'Failed to change password';
+                        newPasswordError.style.display = 'block';
+                        changePasswordBtn.disabled = false;
+                        changePasswordBtn.textContent = 'Change Password';
+                    }
+                });
+            } catch (err) {
+                newPasswordError.textContent = err.message || 'An error occurred';
+                newPasswordError.style.display = 'block';
+                changePasswordBtn.disabled = false;
+                changePasswordBtn.textContent = 'Change Password';
+            }
+        });
+
+        // Logout
+        function logout() {
+            if (cognitoUser) {
+                cognitoUser.signOut();
+            }
+            authToken = null;
+            currentUser = null;
+            cognitoUser = null;
+            showLoginPage();
+        }
+
+        // API call helper with authentication
+        async function apiCall(url, options = {}) {
+            const headers = {
+                'Content-Type': 'application/json',
+                ...options.headers
+            };
+            
+            if (authToken) {
+                headers['Authorization'] = `Bearer ${authToken}`;
+            }
+            
+            const response = await fetch(url, {
+                ...options,
+                headers
+            });
+            
+            // Handle 401 Unauthorized - session expired
+            if (response.status === 401) {
+                showAlert('Session expired. Please login again.', 'error');
+                logout();
+                throw new Error('Session expired');
+            }
+            
+            // Handle 403 Forbidden - insufficient permissions
+            if (response.status === 403) {
+                showAlert('Access denied. Insufficient permissions.', 'error');
+                throw new Error('Access denied');
+            }
+            
+            return response;
+        }
+
+        // Tab switching
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => {
+                t.classList.remove('active');
+                t.style.background = '#5a9dd1';
+                t.style.color = '#fff';
+            });
+            
+            if (tab === 'employees') {
+                document.getElementById('employeesTab').classList.add('active');
+                document.getElementById('tabEmployees').classList.add('active');
+                document.getElementById('tabEmployees').style.background = '#fff';
+                document.getElementById('tabEmployees').style.color = '#2b5278';
+            } else {
+                document.getElementById('hrUsersTab').classList.add('active');
+                document.getElementById('tabHrUsers').classList.add('active');
+                document.getElementById('tabHrUsers').style.background = '#fff';
+                document.getElementById('tabHrUsers').style.color = '#2b5278';
+                loadHrUsers();
+            }
+        }
 
         function showAlert(message, type = 'success') {
             const alertContainer = document.getElementById('alertContainer');
@@ -481,7 +1065,7 @@
 
         async function loadEmployees() {
             try {
-                const response = await fetch(`${API_URL}/employees`);
+                const response = await apiCall(`${API_URL}/employees`);
                 const data = await response.json();
 
                 if (data.success) {
@@ -491,8 +1075,10 @@
                     throw new Error(data.error);
                 }
             } catch (error) {
-                document.getElementById('employeeList').innerHTML = 
-                    `<p style="color: #cc3333;">Error loading employees: ${error.message}</p>`;
+                if (error.message !== 'Session expired' && error.message !== 'Access denied') {
+                    document.getElementById('employeeList').innerHTML = 
+                        `<p style="color: #cc3333;">Error loading employees: ${error.message}</p>`;
+                }
             }
         }
 
@@ -514,6 +1100,7 @@
                     let empIndex = i * 3 + j;
                     if (empIndex < employees.length) {
                         let emp = employees[empIndex];
+                        const escapedName = emp.name.replace(/'/g, "\\'");
                         html += `
                             <div class="employee-cell">
                                 <div class="employee-box">
@@ -527,7 +1114,7 @@
                                         <span class="badge badge-${emp.status}">${emp.status}</span>
                                     </div>
                                     ${emp.status === 'active' ? `
-                                        <button class="button button-delete button-small" onclick="showDeleteModal('${emp.employee_id}', '${emp.name}')">
+                                        <button class="button button-delete button-small" onclick="showDeleteModal('${emp.employee_id}', '${escapedName}')">
                                             Remove Employee
                                         </button>
                                     ` : ''}
@@ -572,7 +1159,7 @@
             if (!currentDeleteId) return;
 
             try {
-                const response = await fetch(`${API_URL}/employees/${currentDeleteId}`, {
+                const response = await apiCall(`${API_URL}/employees/${currentDeleteId}`, {
                     method: 'DELETE'
                 });
 
@@ -586,14 +1173,20 @@
                     throw new Error(data.error);
                 }
             } catch (error) {
-                showAlert(`Error: ${error.message}`, 'error');
+                if (error.message !== 'Session expired' && error.message !== 'Access denied') {
+                    showAlert(`Error: ${error.message}`, 'error');
+                }
             }
         });
 
         window.onclick = function(event) {
             const modal = document.getElementById('deleteModal');
+            const hrModal = document.getElementById('deleteHrUserModal');
             if (event.target == modal) {
                 closeDeleteModal();
+            }
+            if (event.target == hrModal) {
+                closeDeleteHrUserModal();
             }
         }
 
@@ -608,11 +1201,8 @@
             };
 
             try {
-                const response = await fetch(`${API_URL}/employees`, {
+                const response = await apiCall(`${API_URL}/employees`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
                     body: JSON.stringify(formData)
                 });
 
@@ -626,12 +1216,135 @@
                     throw new Error(data.error);
                 }
             } catch (error) {
-                showAlert(`Error: ${error.message}`, 'error');
+                if (error.message !== 'Session expired' && error.message !== 'Access denied') {
+                    showAlert(`Error: ${error.message}`, 'error');
+                }
             }
         });
 
-        loadEmployees();
-        setInterval(loadEmployees, 30000);
+        // ===== HR User Management =====
+        async function loadHrUsers() {
+            try {
+                const response = await apiCall(`${API_URL}/hr-users`);
+                const data = await response.json();
+
+                if (data.success) {
+                    displayHrUsers(data.users);
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                if (error.message !== 'Session expired' && error.message !== 'Access denied') {
+                    document.getElementById('hrUserList').innerHTML = 
+                        `<p style="color: #cc3333;">Error loading HR users: ${error.message}</p>`;
+                }
+            }
+        }
+
+        function displayHrUsers(users) {
+            const container = document.getElementById('hrUserList');
+            
+            if (users.length === 0) {
+                container.innerHTML = '<p style="color: #666;">No HR users found.</p>';
+                return;
+            }
+
+            let html = '';
+            users.forEach(user => {
+                const email = user.email || user.username;
+                const isCurrentUser = currentUser && (email === currentUser.email);
+                html += `
+                    <div class="hr-user-item">
+                        <div class="hr-user-info">
+                            <div class="hr-user-email">${email}</div>
+                            <div class="hr-user-status">Status: ${user.status} | ${user.enabled ? 'Enabled' : 'Disabled'}</div>
+                        </div>
+                        ${!isCurrentUser ? `
+                            <button class="button button-delete button-small" onclick="showDeleteHrUserModal('${user.username}', '${email}')">
+                                Remove
+                            </button>
+                        ` : '<span style="color: #666; font-size: 10px;">(You)</span>'}
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+
+        document.getElementById('hrUserForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const email = document.getElementById('hrUserEmail').value.trim();
+
+            try {
+                const response = await apiCall(`${API_URL}/hr-users`, {
+                    method: 'POST',
+                    body: JSON.stringify({ email })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(data.message, 'success');
+                    e.target.reset();
+                    loadHrUsers();
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                if (error.message !== 'Session expired' && error.message !== 'Access denied') {
+                    showAlert(`Error: ${error.message}`, 'error');
+                }
+            }
+        });
+
+        function showDeleteHrUserModal(username, email) {
+            currentDeleteHrUser = username;
+            document.getElementById('deleteHrUserMessage').innerHTML = 
+                `Are you sure you want to remove <strong>${email}</strong> from HR users?`;
+            document.getElementById('deleteHrUserModal').style.display = 'block';
+        }
+
+        function closeDeleteHrUserModal() {
+            document.getElementById('deleteHrUserModal').style.display = 'none';
+            currentDeleteHrUser = null;
+        }
+
+        document.getElementById('confirmDeleteHrUserBtn').addEventListener('click', async () => {
+            if (!currentDeleteHrUser) return;
+
+            try {
+                const response = await apiCall(`${API_URL}/hr-users/${encodeURIComponent(currentDeleteHrUser)}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(data.message, 'success');
+                    closeDeleteHrUserModal();
+                    loadHrUsers();
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                if (error.message !== 'Session expired' && error.message !== 'Access denied') {
+                    showAlert(`Error: ${error.message}`, 'error');
+                }
+            }
+        });
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            initCognito();
+            
+            // If not authenticated after init, show login
+            setTimeout(() => {
+                if (!authToken) {
+                    showLoginPage();
+                }
+            }, 500);
+        });
     </script>
 </body>
 </html>

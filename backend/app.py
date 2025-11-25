@@ -1,10 +1,15 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import boto3
 import os
 import uuid
 from datetime import datetime
 from decimal import Decimal
+import jwt
+from jwt.algorithms import RSAAlgorithm
+import requests
+from functools import wraps
+import time
 
 app = Flask(__name__)
 CORS(app)
@@ -16,17 +21,175 @@ ec2 = boto3.client('ec2', region_name=os.environ.get('AWS_REGION', 'eu-central-1
 employees_table = dynamodb.Table(os.environ.get('DYNAMODB_TABLE_NAME', 'innovatech-employees'))
 workstations_table = dynamodb.Table(os.environ.get('WORKSTATIONS_TABLE', 'innovatech-workstations'))
 
+# Cognito Configuration
+COGNITO_REGION = os.environ.get('COGNITO_REGION', os.environ.get('AWS_REGION', 'eu-central-1'))
+COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID', '')
+COGNITO_APP_CLIENT_ID = os.environ.get('COGNITO_APP_CLIENT_ID', '')
+COGNITO_KEYS_URL = f'https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}/.well-known/jwks.json'
+
+# Development mode flag - only allow bypassing auth when explicitly enabled
+DEV_MODE = os.environ.get('DEV_MODE', '').lower() == 'true'
+
+# Initialize Cognito client for user management
+cognito_client = boto3.client('cognito-idp', region_name=COGNITO_REGION)
+
+# Cache for Cognito public keys
+_cognito_keys_cache = {
+    'keys': None,
+    'last_fetch': 0
+}
+KEYS_CACHE_TTL = 3600  # 1 hour
+
 # Helper to convert Decimal to float for JSON serialization
 def decimal_to_float(obj):
     if isinstance(obj, Decimal):
         return float(obj)
     raise TypeError
 
+def get_cognito_public_keys():
+    """Fetch and cache Cognito public keys for JWT validation"""
+    global _cognito_keys_cache
+    
+    current_time = time.time()
+    
+    # Return cached keys if still valid
+    if _cognito_keys_cache['keys'] and (current_time - _cognito_keys_cache['last_fetch']) < KEYS_CACHE_TTL:
+        return _cognito_keys_cache['keys']
+    
+    # Skip if Cognito is not configured
+    if not COGNITO_USER_POOL_ID:
+        app.logger.warning("Cognito User Pool ID not configured")
+        return None
+    
+    try:
+        response = requests.get(COGNITO_KEYS_URL, timeout=10)
+        response.raise_for_status()
+        keys = response.json().get('keys', [])
+        
+        _cognito_keys_cache['keys'] = keys
+        _cognito_keys_cache['last_fetch'] = current_time
+        
+        return keys
+    except requests.RequestException as e:
+        app.logger.error(f"Error fetching Cognito public keys: {str(e)}")
+        return _cognito_keys_cache['keys']  # Return cached keys if fetch fails
+
+def verify_token(token):
+    """Verify JWT token from Cognito"""
+    if not COGNITO_USER_POOL_ID:
+        app.logger.warning("Cognito not configured, skipping token verification")
+        return None
+    
+    try:
+        # Get the key ID from token header
+        headers = jwt.get_unverified_header(token)
+        kid = headers.get('kid')
+        
+        # Get Cognito public keys
+        keys = get_cognito_public_keys()
+        if not keys:
+            return None
+        
+        # Find the matching key
+        key = None
+        for k in keys:
+            if k.get('kid') == kid:
+                key = k
+                break
+        
+        if not key:
+            app.logger.error("Token key ID not found in Cognito keys")
+            return None
+        
+        # Construct the public key
+        public_key = RSAAlgorithm.from_jwk(key)
+        
+        # Verify and decode the token
+        payload = jwt.decode(
+            token,
+            public_key,
+            algorithms=['RS256'],
+            audience=COGNITO_APP_CLIENT_ID,
+            issuer=f'https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}'
+        )
+        
+        return payload
+        
+    except jwt.ExpiredSignatureError:
+        app.logger.warning("Token has expired")
+        return None
+    except jwt.InvalidTokenError as e:
+        app.logger.warning(f"Invalid token: {str(e)}")
+        return None
+    except Exception as e:
+        app.logger.error(f"Error verifying token: {str(e)}")
+        return None
+
+def require_auth(allowed_groups=None):
+    """Decorator to require authentication and optionally check group membership"""
+    if allowed_groups is None:
+        allowed_groups = ['HR-Admins']
+    
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            # Skip auth if Cognito is not configured AND DEV_MODE is explicitly enabled
+            if not COGNITO_USER_POOL_ID:
+                if DEV_MODE:
+                    app.logger.warning("DEV_MODE enabled: Cognito not configured, skipping authentication")
+                    g.user = {'email': 'dev@localhost', 'groups': ['HR-Admins']}
+                    return f(*args, **kwargs)
+                else:
+                    app.logger.error("Cognito not configured and DEV_MODE is not enabled")
+                    return jsonify({
+                        'success': False,
+                        'error': 'Authentication service not configured'
+                    }), 503
+            
+            # Get token from Authorization header
+            auth_header = request.headers.get('Authorization', '')
+            if not auth_header.startswith('Bearer '):
+                return jsonify({
+                    'success': False,
+                    'error': 'Missing or invalid Authorization header'
+                }), 401
+            
+            token = auth_header.replace('Bearer ', '')
+            
+            # Verify token
+            payload = verify_token(token)
+            if not payload:
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid or expired token'
+                }), 401
+            
+            # Check group membership
+            user_groups = payload.get('cognito:groups', [])
+            if allowed_groups and not any(group in user_groups for group in allowed_groups):
+                return jsonify({
+                    'success': False,
+                    'error': 'Insufficient permissions. Access denied.'
+                }), 403
+            
+            # Attach user info to request context
+            g.user = {
+                'email': payload.get('email', ''),
+                'username': payload.get('cognito:username', payload.get('sub', '')),
+                'groups': user_groups,
+                'sub': payload.get('sub', '')
+            }
+            
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'healthy', 'service': 'backend-api'}), 200
 
 @app.route('/api/employees', methods=['GET'])
+@require_auth()
 def get_employees():
     """Get all employees with workstation info"""
     try:
@@ -68,6 +231,7 @@ def get_employees():
         }), 500
 
 @app.route('/api/employees', methods=['POST'])
+@require_auth()
 def create_employee():
     """Create a new employee"""
     try:
@@ -123,6 +287,7 @@ def create_employee():
         }), 500
 
 @app.route('/api/employees/<employee_id>', methods=['GET'])
+@require_auth()
 def get_employee(employee_id):
     """Get a specific employee with workstation details"""
     try:
@@ -178,6 +343,7 @@ def get_employee(employee_id):
         }), 500
 
 @app.route('/api/employees/<employee_id>', methods=['PUT'])
+@require_auth()
 def update_employee(employee_id):
     """Update an employee"""
     try:
@@ -245,6 +411,7 @@ def root_health():
     return jsonify({'status': 'healthy', 'service': 'backend-api'}), 200
 
 @app.route('/api/employees/<employee_id>', methods=['DELETE'])
+@require_auth()
 def delete_employee(employee_id):
     """
     Delete an employee (Hard Delete to trigger 'REMOVE' stream event)
@@ -270,6 +437,7 @@ def delete_employee(employee_id):
         }), 500
 
 @app.route('/api/workstations', methods=['GET'])
+@require_auth()
 def get_workstations():
     """Get all workstations with real-time EC2 status"""
     try:
@@ -317,6 +485,7 @@ def get_workstations():
         }), 500
 
 @app.route('/api/stats', methods=['GET'])
+@require_auth()
 def get_stats():
     """Get dashboard statistics"""
     try:
@@ -352,6 +521,161 @@ def get_stats():
         
     except Exception as e:
         app.logger.error(f"Error getting stats: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+# ===== HR User Management Endpoints =====
+
+@app.route('/api/hr-users', methods=['POST'])
+@require_auth()
+def create_hr_user():
+    """Create new HR user in Cognito and add to HR-Admins group"""
+    if not COGNITO_USER_POOL_ID:
+        return jsonify({
+            'success': False,
+            'error': 'Cognito is not configured'
+        }), 500
+    
+    try:
+        data = request.json
+        email = data.get('email', '').strip()
+        
+        if not email or '@' not in email:
+            return jsonify({
+                'success': False,
+                'error': 'Valid email address is required'
+            }), 400
+        
+        # Create user in Cognito
+        response = cognito_client.admin_create_user(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            Username=email,
+            UserAttributes=[
+                {'Name': 'email', 'Value': email},
+                {'Name': 'email_verified', 'Value': 'true'}
+            ],
+            DesiredDeliveryMediums=['EMAIL'],
+            ForceAliasCreation=False
+        )
+        
+        # Add user to HR-Admins group
+        cognito_client.admin_add_user_to_group(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            Username=email,
+            GroupName='HR-Admins'
+        )
+        
+        app.logger.info(f"Created HR user: {email} by {g.user.get('email', 'unknown')}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'HR user {email} created successfully. A temporary password has been sent to their email.',
+            'user': {
+                'email': email,
+                'status': response.get('User', {}).get('UserStatus', 'FORCE_CHANGE_PASSWORD')
+            }
+        }), 201
+        
+    except cognito_client.exceptions.UsernameExistsException:
+        return jsonify({
+            'success': False,
+            'error': 'A user with this email already exists'
+        }), 409
+    except Exception as e:
+        app.logger.error(f"Error creating HR user: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/hr-users', methods=['GET'])
+@require_auth()
+def list_hr_users():
+    """List all HR users in the HR-Admins group"""
+    if not COGNITO_USER_POOL_ID:
+        return jsonify({
+            'success': False,
+            'error': 'Cognito is not configured'
+        }), 500
+    
+    try:
+        # List users in HR-Admins group
+        response = cognito_client.list_users_in_group(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            GroupName='HR-Admins',
+            Limit=60
+        )
+        
+        users = []
+        for user in response.get('Users', []):
+            user_data = {
+                'username': user.get('Username', ''),
+                'status': user.get('UserStatus', ''),
+                'enabled': user.get('Enabled', False),
+                'created_at': user.get('UserCreateDate', '').isoformat() if user.get('UserCreateDate') else '',
+                'last_modified': user.get('UserLastModifiedDate', '').isoformat() if user.get('UserLastModifiedDate') else ''
+            }
+            
+            # Extract email from attributes
+            for attr in user.get('Attributes', []):
+                if attr.get('Name') == 'email':
+                    user_data['email'] = attr.get('Value', '')
+            
+            users.append(user_data)
+        
+        return jsonify({
+            'success': True,
+            'users': users,
+            'count': len(users)
+        }), 200
+        
+    except Exception as e:
+        app.logger.error(f"Error listing HR users: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/hr-users/<username>', methods=['DELETE'])
+@require_auth()
+def delete_hr_user(username):
+    """Delete an HR user from Cognito"""
+    if not COGNITO_USER_POOL_ID:
+        return jsonify({
+            'success': False,
+            'error': 'Cognito is not configured'
+        }), 500
+    
+    try:
+        # Prevent self-deletion
+        if g.user.get('email') == username or g.user.get('username') == username:
+            return jsonify({
+                'success': False,
+                'error': 'You cannot delete your own account'
+            }), 400
+        
+        # Delete user from Cognito
+        cognito_client.admin_delete_user(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            Username=username
+        )
+        
+        app.logger.info(f"Deleted HR user: {username} by {g.user.get('email', 'unknown')}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'HR user {username} deleted successfully'
+        }), 200
+        
+    except cognito_client.exceptions.UserNotFoundException:
+        return jsonify({
+            'success': False,
+            'error': 'User not found'
+        }), 404
+    except Exception as e:
+        app.logger.error(f"Error deleting HR user: {str(e)}")
         return jsonify({
             'success': False,
             'error': str(e)

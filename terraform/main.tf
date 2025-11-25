@@ -728,6 +728,29 @@ resource "aws_iam_role_policy" "backend_dynamodb" {
   })
 }
 
+# IAM Policy for Backend Cognito Operations (HR User Management)
+resource "aws_iam_role_policy" "backend_cognito" {
+  name = "${var.project_name}-backend-cognito-policy"
+  role = aws_iam_role.backend_app.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "cognito-idp:AdminCreateUser",
+          "cognito-idp:AdminAddUserToGroup",
+          "cognito-idp:ListUsersInGroup",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:AdminDeleteUser"
+        ]
+        Resource = aws_cognito_user_pool.hr_portal.arn
+      }
+    ]
+  })
+}
+
 # ===== IAM Role for AWS Load Balancer Controller =====
 data "aws_iam_policy_document" "lbc_assume_role" {
   statement {
