@@ -717,7 +717,7 @@
                             <tr>
                                 <td colspan="2">
                                     <p style="color: #666; font-size: 10px; margin-top: 10px;">
-                                        📱 Credentials will be sent to Slack. The user will be required to change their password on first login.
+                                        Credentials will be sent to Slack. The user will be required to change their password on first login.
                                     </p>
                                 </td>
                             </tr>
@@ -913,6 +913,7 @@
                     newPasswordRequired: function(userAttributes, requiredAttributes) {
                         // Store user attributes for password change
                         delete userAttributes.email_verified;
+                        delete userAttributes.email;  // Add this line
                         window.cognitoUserAttributes = userAttributes;
                         
                         // Show new password form
@@ -1293,7 +1294,7 @@
 
                 if (data.success) {
                     // Show success message with Slack notification info
-                    showAlert(`✅ HR user ${email} created! Credentials sent to Slack. User must change password on first login.`, 'success');
+                    showAlert(`HR user ${email} created! Credentials sent to Slack. User must change password on first login.`, 'success');
                     e.target.reset();
                     loadHrUsers();
                 } else {
