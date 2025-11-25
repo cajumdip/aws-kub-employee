@@ -21,7 +21,7 @@ data "aws_availability_zones" "available" {
 # Automatically zip the Lambda code AND libraries
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_dir  = "${path.module}/../lambda"      # <--- CHANGED FROM source_file
+  source_dir  = "${path.module}/../lambda" # <--- CHANGED FROM source_file
   output_path = "${path.module}/lambda_onboarding.zip"
   excludes    = ["test-event.json", "output.json", "__pycache__", "*.pyc"]
 }
@@ -105,8 +105,8 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name                                           = "${var.project_name}-public-${count.index + 1}"
-    "kubernetes.io/role/elb"                       = "1"
+    Name                                                = "${var.project_name}-public-${count.index + 1}"
+    "kubernetes.io/role/elb"                            = "1"
     "kubernetes.io/cluster/${var.project_name}-cluster" = "shared"
   }
 }
@@ -119,8 +119,8 @@ resource "aws_subnet" "private" {
   availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = {
-    Name                                           = "${var.project_name}-private-${count.index + 1}"
-    "kubernetes.io/role/internal-elb"              = "1"
+    Name                                                = "${var.project_name}-private-${count.index + 1}"
+    "kubernetes.io/role/internal-elb"                   = "1"
     "kubernetes.io/cluster/${var.project_name}-cluster" = "shared"
   }
 }
@@ -183,11 +183,11 @@ resource "aws_eip" "nat_instance" {
 
 resource "aws_instance" "nat" {
   ami                         = data.aws_ami.amazon_linux_2.id
-  instance_type              = "t3.micro"
-  subnet_id                  = aws_subnet.public[0].id
-  vpc_security_group_ids     = [aws_security_group.nat_instance.id]
+  instance_type               = "t3.micro"
+  subnet_id                   = aws_subnet.public[0].id
+  vpc_security_group_ids      = [aws_security_group.nat_instance.id]
   associate_public_ip_address = true
-  source_dest_check          = false
+  source_dest_check           = false
 
   user_data = <<-EOF
               #!/bin/bash
@@ -264,12 +264,12 @@ resource "aws_eip" "vpn" {
 resource "aws_instance" "vpn" {
   count                       = var.enable_vpn ? 1 : 0
   ami                         = data.aws_ami.ubuntu_arm64.id
-  instance_type              = var.vpn_instance_type
-  key_name                   = aws_key_pair.vpn[0].key_name
-  subnet_id                  = aws_subnet.public[0].id
-  vpc_security_group_ids     = [aws_security_group.vpn[0].id]
+  instance_type               = var.vpn_instance_type
+  key_name                    = aws_key_pair.vpn[0].key_name
+  subnet_id                   = aws_subnet.public[0].id
+  vpc_security_group_ids      = [aws_security_group.vpn[0].id]
   associate_public_ip_address = true
-  source_dest_check          = false
+  source_dest_check           = false
 
   user_data = templatefile("${path.module}/vpn-userdata.sh", {
     vpn_client_count = var.vpn_client_count
@@ -317,7 +317,7 @@ resource "aws_security_group_rule" "workstation_rdp_from_vpn" {
   from_port         = 3389
   to_port           = 3389
   protocol          = "tcp"
-  cidr_blocks       = ["10.200.200.0/24"]  # VPN client network
+  cidr_blocks       = ["10.200.200.0/24"] # VPN client network
   security_group_id = aws_security_group.workstations.id
   description       = "RDP from VPN clients"
 }
@@ -393,10 +393,10 @@ resource "aws_security_group" "eks_nodes" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    from_port   = 0
-    to_port     = 65535
-    protocol    = "tcp"
-    self        = true
+    from_port = 0
+    to_port   = 65535
+    protocol  = "tcp"
+    self      = true
   }
 
   egress {
@@ -448,10 +448,10 @@ resource "aws_security_group" "workstations" {
 
 # ===== DynamoDB for Employee Data =====
 resource "aws_dynamodb_table" "employees" {
-  name           = "${var.project_name}-employees"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "employee_id"
-  stream_enabled = true
+  name             = "${var.project_name}-employees"
+  billing_mode     = "PAY_PER_REQUEST"
+  hash_key         = "employee_id"
+  stream_enabled   = true
   stream_view_type = "NEW_AND_OLD_IMAGES"
 
   attribute {
@@ -470,9 +470,9 @@ resource "aws_dynamodb_table" "employees" {
 
 # DynamoDB for EC2 Workstation Tracking
 resource "aws_dynamodb_table" "workstations" {
-  name           = "${var.project_name}-workstations"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "employee_id"
+  name         = "${var.project_name}-workstations"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "employee_id"
 
   attribute {
     name = "employee_id"
@@ -804,7 +804,7 @@ resource "aws_s3_bucket" "enrollment_scripts" {
 
 resource "aws_s3_bucket_versioning" "enrollment_scripts" {
   bucket = aws_s3_bucket.enrollment_scripts.id
-  
+
   versioning_configuration {
     status = "Enabled"
   }
@@ -1177,7 +1177,7 @@ resource "aws_secretsmanager_secret" "ad_password" {
 }
 
 resource "aws_secretsmanager_secret_version" "ad_password_val" {
-  secret_id     = aws_secretsmanager_secret.ad_password.id
+  secret_id = aws_secretsmanager_secret.ad_password.id
   secret_string = jsonencode({
     username = "Admin"
     password = var.directory_password
@@ -1239,13 +1239,13 @@ resource "aws_lambda_function" "onboarding" {
   # Use the dynamic zip file created by the data source above
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-  
-  function_name    = "${var.project_name}-onboarding-automation"
-  role             = aws_iam_role.lambda_onboarding.arn
-  handler          = "index.handler"
-  runtime          = "python3.11"
-  timeout          = 300
-  memory_size      = 512
+
+  function_name = "${var.project_name}-onboarding-automation"
+  role          = aws_iam_role.lambda_onboarding.arn
+  handler       = "index.handler"
+  runtime       = "python3.11"
+  timeout       = 300
+  memory_size   = 512
 
   vpc_config {
     subnet_ids         = aws_subnet.private[*].id
@@ -1266,10 +1266,10 @@ resource "aws_lambda_function" "onboarding" {
       WORKSTATION_SG_ID         = aws_security_group.workstations.id
       WORKSTATION_PROFILE_NAME  = aws_iam_instance_profile.workstation_profile.name
       # --- NEW AD VARIABLES ---
-      DIRECTORY_ID              = aws_directory_service_directory.main.id
-      DIRECTORY_NAME            = var.directory_name
-      AD_SECRET_ARN             = aws_secretsmanager_secret.ad_password.arn
-      DOMAIN_JOIN_DOC           = aws_ssm_document.domain_join.name
+      DIRECTORY_ID    = aws_directory_service_directory.main.id
+      DIRECTORY_NAME  = var.directory_name
+      AD_SECRET_ARN   = aws_secretsmanager_secret.ad_password.arn
+      DOMAIN_JOIN_DOC = aws_ssm_document.domain_join.name
     }
   }
 
@@ -1407,7 +1407,7 @@ resource "aws_directory_service_directory" "main" {
   type     = "MicrosoftAD"
 
   vpc_settings {
-    vpc_id     = aws_vpc.main.id
+    vpc_id = aws_vpc.main.id
     # Use the private subnets for the Domain Controllers
     subnet_ids = aws_subnet.private[*].id
   }
