@@ -194,6 +194,9 @@ metadata:
     kubectl apply -f k8s/05-resource-quotas.yaml
     Start-Sleep -Seconds 5
 
+    kubectl apply -f k8s/06-cognito-config.yaml
+    Start-Sleep -Seconds 5
+
     Pop-Location # Return to Terraform directory
 
     Write-Host "Application deployment initiated" -ForegroundColor Green
