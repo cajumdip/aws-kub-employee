@@ -51,23 +51,17 @@ resource "aws_cognito_user_pool" "hr_portal" {
     }
   }
 
-  # Admin create user settings
+  # Admin create user settings - email notifications are handled via Slack instead
   admin_create_user_config {
     allow_admin_create_user_only = true
-
-    invite_message_template {
-      email_message = "Your Innovatech HR Portal username is {username}. Your temporary password is {####}. Please login and change your password."
-      email_subject = "Welcome to Innovatech HR Portal"
-      sms_message   = "Your Innovatech HR Portal username is {username}. Your temporary password is {####}."
-    }
   }
 
   # MFA configuration (optional, can be enabled later)
   mfa_configuration = "OFF"
 
-  # Email configuration (uses Cognito default)
+  # Email configuration - disabled, credentials sent via Slack
   email_configuration {
-    email_sending_account = "COGNITO_DEFAULT"
+    email_sending_account = "DEVELOPER"
   }
 
   tags = {

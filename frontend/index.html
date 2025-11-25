@@ -710,8 +710,14 @@
                                     <input type="email" id="hrUserEmail" required placeholder="hr.admin@innovatech.com">
                                 </td>
                                 <td width="50%">
-                                    <p style="color: #666; font-size: 10px; margin-top: 20px;">
-                                        A temporary password will be sent to this email. The user will be required to change it on first login.
+                                    <label for="hrUserName">Name (Optional)</label>
+                                    <input type="text" id="hrUserName" placeholder="John Doe">
+                                </td>
+                            </tr>
+                            <tr>
+                                <td colspan="2">
+                                    <p style="color: #666; font-size: 10px; margin-top: 10px;">
+                                        📱 Credentials will be sent to Slack. The user will be required to change their password on first login.
                                     </p>
                                 </td>
                             </tr>
@@ -1275,17 +1281,19 @@
             e.preventDefault();
 
             const email = document.getElementById('hrUserEmail').value.trim();
+            const name = document.getElementById('hrUserName').value.trim();
 
             try {
                 const response = await apiCall(`${API_URL}/hr-users`, {
                     method: 'POST',
-                    body: JSON.stringify({ email })
+                    body: JSON.stringify({ email, name })
                 });
 
                 const data = await response.json();
 
                 if (data.success) {
-                    showAlert(data.message, 'success');
+                    // Show success message with Slack notification info
+                    showAlert(`✅ HR user ${email} created! Credentials sent to Slack. User must change password on first login.`, 'success');
                     e.target.reset();
                     loadHrUsers();
                 } else {
