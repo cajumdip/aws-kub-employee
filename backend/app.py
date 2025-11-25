@@ -10,7 +10,6 @@ from jwt.algorithms import RSAAlgorithm
 import requests
 from functools import wraps
 import time
-import random
 import string
 import secrets
 
@@ -566,10 +565,13 @@ def send_hr_user_slack_notification(email, name, temp_password, created_by):
         return
     
     # Get portal URL from environment or use placeholder
-    portal_url = os.environ.get('PORTAL_URL', 'http://your-alb-url')
+    portal_url = os.environ.get('PORTAL_URL', 'http://your-alb-domain')
+    
+    # Use email username as fallback if name is empty
+    display_name = name if name else email.split('@')[0]
     
     message = {
-        "text": f"🔐 New HR Portal Account Created for {name}",
+        "text": f"🔐 New HR Portal Account Created for {display_name}",
         "blocks": [
             {
                 "type": "header",
@@ -583,7 +585,7 @@ def send_hr_user_slack_notification(email, name, temp_password, created_by):
                 "fields": [
                     {
                         "type": "mrkdwn",
-                        "text": f"*Name:*\n{name}"
+                        "text": f"*Name:*\n{display_name}"
                     },
                     {
                         "type": "mrkdwn",

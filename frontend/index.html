@@ -1292,11 +1292,8 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    // Show detailed success message with Slack notification info
-                    alert(`✅ HR user created successfully!\n\n` +
-                          `Email: ${email}\n\n` +
-                          `📱 Credentials have been sent to Slack.\n` +
-                          `The user must change their password on first login.`);
+                    // Show success message with Slack notification info
+                    showAlert(`✅ HR user ${email} created! Credentials sent to Slack. User must change password on first login.`, 'success');
                     e.target.reset();
                     loadHrUsers();
                 } else {
