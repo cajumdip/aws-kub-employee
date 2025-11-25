@@ -676,12 +676,11 @@ def create_hr_user():
             UserPoolId=COGNITO_USER_POOL_ID,
             Username=email,
             UserAttributes=[
-                {'Name': 'email', 'Value': email},
                 {'Name': 'email_verified', 'Value': 'true'}
             ],
             TemporaryPassword=temp_password,
-            MessageAction='SUPPRESS',  # Don't send Cognito email
-            DesiredDeliveryMediums=[],  # No email/SMS delivery
+            MessageAction='SUPPRESS',
+            DesiredDeliveryMediums=[],
             ForceAliasCreation=False
         )
         
