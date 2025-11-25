@@ -52,6 +52,14 @@ spec:
             configMapKeyRef:
               name: cognito-config
               key: app_client_id
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: slack-webhook
+              key: url
+              optional: true
+        - name: PORTAL_URL
+          value: "http://your-alb-domain"  # Update after deployment with actual ALB URL
         resources:
           requests:
             memory: "256Mi"

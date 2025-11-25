@@ -10,6 +10,9 @@ from jwt.algorithms import RSAAlgorithm
 import requests
 from functools import wraps
 import time
+import random
+import string
+import secrets
 
 app = Flask(__name__)
 CORS(app)
@@ -528,6 +531,120 @@ def get_stats():
 
 # ===== HR User Management Endpoints =====
 
+def generate_temp_password():
+    """Generate secure temporary password for new HR users"""
+    # Password requirements: 8+ chars, upper, lower, number, special
+    chars = string.ascii_letters + string.digits + "!@#$%^&*"
+    
+    # Ensure it meets all requirements
+    password = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#$%^&*"),
+    ]
+    
+    # Fill remaining characters (12 more for 16 total)
+    password += [secrets.choice(chars) for _ in range(12)]
+    
+    # Shuffle using secrets for cryptographic security
+    shuffled = list(password)
+    for i in range(len(shuffled) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+    
+    return ''.join(shuffled)
+
+
+def send_hr_user_slack_notification(email, name, temp_password, created_by):
+    """Send Slack notification with HR portal credentials"""
+    
+    slack_webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
+    
+    if not slack_webhook_url:
+        app.logger.warning("SLACK_WEBHOOK_URL not set, skipping Slack notification")
+        return
+    
+    # Get portal URL from environment or use placeholder
+    portal_url = os.environ.get('PORTAL_URL', 'http://your-alb-url')
+    
+    message = {
+        "text": f"🔐 New HR Portal Account Created for {name}",
+        "blocks": [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "🔐 New HR Portal Account Created"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Name:*\n{name}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Email:*\n{email}"
+                    }
+                ]
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Temporary Password:*\n`{temp_password}`"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": "*Group:*\nHR-Admins"
+                    }
+                ]
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Portal URL:*\n{portal_url}"
+                }
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "⚠️ User must change password on first login"
+                    }
+                ]
+            },
+            {
+                "type": "divider"
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"Created by: {created_by} | {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+                    }
+                ]
+            }
+        ]
+    }
+    
+    try:
+        response = requests.post(slack_webhook_url, json=message, timeout=10)
+        if response.status_code == 200:
+            app.logger.info(f"Slack notification sent for HR user: {email}")
+        else:
+            app.logger.warning(f"Failed to send Slack notification: {response.status_code}")
+    except requests.RequestException as e:
+        app.logger.error(f"Error sending Slack notification: {e}")
+
+
 @app.route('/api/hr-users', methods=['POST'])
 @require_auth()
 def create_hr_user():
@@ -541,6 +658,7 @@ def create_hr_user():
     try:
         data = request.json
         email = data.get('email', '').strip()
+        name = data.get('name', email.split('@')[0] if email else '')
         
         if not email or '@' not in email:
             return jsonify({
@@ -548,7 +666,10 @@ def create_hr_user():
                 'error': 'Valid email address is required'
             }), 400
         
-        # Create user in Cognito
+        # Generate temporary password
+        temp_password = generate_temp_password()
+        
+        # Create user in Cognito - suppress email, we'll send via Slack
         response = cognito_client.admin_create_user(
             UserPoolId=COGNITO_USER_POOL_ID,
             Username=email,
@@ -556,7 +677,9 @@ def create_hr_user():
                 {'Name': 'email', 'Value': email},
                 {'Name': 'email_verified', 'Value': 'true'}
             ],
-            DesiredDeliveryMediums=['EMAIL'],
+            TemporaryPassword=temp_password,
+            MessageAction='SUPPRESS',  # Don't send Cognito email
+            DesiredDeliveryMediums=[],  # No email/SMS delivery
             ForceAliasCreation=False
         )
         
@@ -567,11 +690,19 @@ def create_hr_user():
             GroupName='HR-Admins'
         )
         
+        # Send Slack notification with credentials
+        send_hr_user_slack_notification(
+            email=email,
+            name=name,
+            temp_password=temp_password,
+            created_by=g.user.get('email', 'Unknown')
+        )
+        
         app.logger.info(f"Created HR user: {email} by {g.user.get('email', 'unknown')}")
         
         return jsonify({
             'success': True,
-            'message': f'HR user {email} created successfully. A temporary password has been sent to their email.',
+            'message': f'HR user {email} created. Credentials sent to Slack.',
             'user': {
                 'email': email,
                 'status': response.get('User', {}).get('UserStatus', 'FORCE_CHANGE_PASSWORD')
