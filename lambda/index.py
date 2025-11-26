@@ -373,41 +373,12 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
         print(f"Failed to create user object: {e}")
         raise e
     
-    # 3. Set password via LDAP modify (same connection, port 389)
+    # 3. Password will be set by workstation User Data script after domain join
     temp_password = f"Welcome{datetime.now().year}!"
     
-    print(f"Setting password for AD user")
-    try:
-        # Set unicodePwd attribute (requires UTF-16-LE encoding with quotes)
-        password_value = f'"{temp_password}"'.encode('utf-16-le')
-        
-        conn_389.modify(user_dn, {
-            'unicodePwd': [(MODIFY_REPLACE, [password_value])]
-        })
-        
-        if conn_389.result['result'] == 0:
-            print(f"Password set successfully")
-        else:
-            print(f"Password set failed: {conn_389.result}")
-            raise Exception(f"Failed to set password: {conn_389.result['description']}")
-        
-        # Enable the account
-        conn_389.modify(user_dn, {
-            'userAccountControl': [(MODIFY_REPLACE, [USER_ACCOUNT_CONTROL_NORMAL])]
-        })
-        
-        if conn_389.result['result'] == 0:
-            print(f"Account enabled successfully")
-        else:
-            print(f"Account enable failed: {conn_389.result}")
-            raise Exception(f"Failed to enable account: {conn_389.result['description']}")
-            
-    except Exception as e:
-        print(f"Error setting password/enabling account: {e}")
-        raise e
-    finally:
-        conn_389.unbind()
-    
+    print(f"AD user created (password will be set by workstation after domain join)")
+    conn_389.unbind()
+
     return temp_password
 
 def _create_ad_user_object(conn, username, name, email, dept, directory_name):
@@ -523,6 +494,10 @@ def launch_workstation(name, emp_id, dept):
     dc_ip_1 = dc_ips[0] if len(dc_ips) > 0 else "10.0.10.78"
     dc_ip_2 = dc_ips[1] if len(dc_ips) > 1 else "10.0.11.216"
     
+    # Extract username from employee name for password setting
+    username = name.lower().replace(' ', '.')
+    temp_password = f"Welcome{datetime.now().year}!"
+    
     # User Data with PowerShell domain join
     user_data = f"""<powershell>
 # Configure DNS to use domain controllers
@@ -539,7 +514,7 @@ Start-Sleep -Seconds 30
 Install-WindowsFeature RSAT-AD-PowerShell -ErrorAction SilentlyContinue
 
 # Join domain
-$adminUser = "innovatech\\{admin_user}"
+$adminUser = "{DIRECTORY_NAME}\\{admin_user}"
 $adminPass = ConvertTo-SecureString "{admin_pass}" -AsPlainText -Force
 $credential = New-Object System.Management.Automation.PSCredential($adminUser, $adminPass)
 
@@ -549,7 +524,7 @@ $success = $false
 
 while (-not $success -and $retryCount -lt $maxRetries) {{
     try {{
-        Add-Computer -DomainName "{DIRECTORY_NAME}" -Credential $credential -OUPath "OU=Computers,OU=innovatech,DC=innovatech,DC=local" -Force -ErrorAction Stop
+        Add-Computer -DomainName "{DIRECTORY_NAME}" -Credential $credential -OUPath "OU=Computers,OU=INNOVATECH,DC=innovatech,DC=local" -Force -ErrorAction Stop
         Write-Host "Domain join successful"
         $success = $true
     }} catch {{
@@ -559,11 +534,11 @@ while (-not $success -and $retryCount -lt $maxRetries) {{
     }}
 }}
 
-# Reboot if domain join succeeded
+# If domain join succeeded, set user password and enable RDP
 if ($success) {{
-    Write-Host "Rebooting to complete domain join..."
+    Write-Host "Setting up user account and RDP..."
     
-    # Enable RDP before reboot
+    # Enable RDP
     Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0
     Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
     
@@ -572,13 +547,33 @@ if ($success) {{
         Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Domain Users" -ErrorAction SilentlyContinue
         Write-Host "Granted RDP access to Domain Users"
     }} catch {{
-        Write-Host "RDP permission setup: $_"
+        Write-Host "RDP permission already exists"
     }}
     
+    # Set user password (after domain join, we can use AD cmdlets)
+    $username = "{username}"
+    $userPassword = ConvertTo-SecureString "{temp_password}" -AsPlainText -Force
+    
+    $passwordSet = $false
+    $retryCount = 0
+    while (-not $passwordSet -and $retryCount -lt 10) {{
+        try {{
+            Set-ADAccountPassword -Identity $username -NewPassword $userPassword -Reset -Server "{DIRECTORY_NAME}" -Credential $credential -ErrorAction Stop
+            Enable-ADAccount -Identity $username -Server "{DIRECTORY_NAME}" -Credential $credential -ErrorAction Stop
+            Write-Host "Password set and account enabled for $username"
+            $passwordSet = $true
+        }} catch {{
+            $retryCount++
+            Write-Host "Password set attempt $retryCount failed: $_ - Retrying..."
+            Start-Sleep -Seconds 15
+        }}
+    }}
+    
+    Write-Host "Rebooting to complete setup..."
     Restart-Computer -Force
 }}
 </powershell>
-<persist>false</persist>
+<persist>true</persist>
 """
     
     try:
