@@ -76,3 +76,22 @@ variable "admin_email" {
   type        = string
   default     = "admin@innovatech.com"
 }
+
+# ===== Monitoring Variables =====
+variable "alert_email" {
+  description = "Email address for CloudWatch alarm notifications"
+  type        = string
+  default     = "admin@innovatech.com"
+}
+
+variable "monthly_budget_limit" {
+  description = "Monthly budget limit in USD for cost alerts"
+  type        = number
+  default     = 100
+}
+
+variable "log_retention_days" {
+  description = "Number of days to retain CloudWatch logs"
+  type        = number
+  default     = 30
+}

@@ -112,7 +112,7 @@ output "vpn_client_config_location" {
 
 output "vpn_setup_commands" {
   description = "Commands to retrieve VPN client configurations"
-  value = var.enable_vpn ? "ssh ubuntu@${aws_eip.vpn[0].public_ip} and run: sudo cat /etc/wireguard/clients/client1.conf" : "VPN not enabled"
+  value       = var.enable_vpn ? "ssh ubuntu@${aws_eip.vpn[0].public_ip} and run: sudo cat /etc/wireguard/clients/client1.conf" : "VPN not enabled"
 }
 
 output "vpn_ssh_key_path" {
@@ -151,4 +151,28 @@ output "initial_admin_password" {
   description = "Initial temporary password for admin user (must be changed on first login)"
   value       = random_password.admin_initial_password.result
   sensitive   = true
+}
+
+# ===== Monitoring Outputs =====
+output "cloudwatch_dashboard_url" {
+  description = "URL to the CloudWatch monitoring dashboard"
+  value       = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${aws_cloudwatch_dashboard.main.dashboard_name}"
+}
+
+output "cloudwatch_log_groups" {
+  description = "List of CloudWatch log group names"
+  value = [
+    aws_cloudwatch_log_group.eks_cluster.name,
+    aws_cloudwatch_log_group.lambda_onboarding.name
+  ]
+}
+
+output "monitoring_sns_topic_arn" {
+  description = "SNS topic ARN for monitoring alerts"
+  value       = aws_sns_topic.monitoring_alerts.arn
+}
+
+output "monthly_budget_name" {
+  description = "Name of the monthly AWS budget"
+  value       = aws_budgets_budget.monthly.name
 }
