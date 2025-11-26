@@ -8,11 +8,15 @@ from datetime import datetime
 
 # Try to import ldap3 for AD operations
 try:
-    from ldap3 import Server, Connection, ALL
+    from ldap3 import Server, Connection, ALL, MODIFY_REPLACE
     LDAP_AVAILABLE = True
 except ImportError:
     LDAP_AVAILABLE = False
+    MODIFY_REPLACE = 3  # Fallback value if ldap3 not available
     print("⚠️ ldap3 library not found. AD User creation will be skipped.")
+
+# Active Directory userAccountControl values
+USER_ACCOUNT_CONTROL_NORMAL = '512'  # Normal account, enabled
 
 # Initialize AWS clients
 iam = boto3.client('iam')
@@ -372,13 +376,13 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
     # 3. Set password via LDAP modify (same connection, port 389)
     temp_password = f"Welcome{datetime.now().year}!"
     
-    print(f"Setting password for user: {username}")
+    print(f"Setting password for AD user")
     try:
         # Set unicodePwd attribute (requires UTF-16-LE encoding with quotes)
         password_value = f'"{temp_password}"'.encode('utf-16-le')
         
         conn_389.modify(user_dn, {
-            'unicodePwd': [(3, [password_value])]  # LDAP_MOD_REPLACE = 3
+            'unicodePwd': [(MODIFY_REPLACE, [password_value])]
         })
         
         if conn_389.result['result'] == 0:
@@ -387,9 +391,9 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
             print(f"Password set failed: {conn_389.result}")
             raise Exception(f"Failed to set password: {conn_389.result['description']}")
         
-        # Enable the account (userAccountControl: 512 = normal account)
+        # Enable the account
         conn_389.modify(user_dn, {
-            'userAccountControl': [(3, ['512'])]  # LDAP_MOD_REPLACE = 3
+            'userAccountControl': [(MODIFY_REPLACE, [USER_ACCOUNT_CONTROL_NORMAL])]
         })
         
         if conn_389.result['result'] == 0:
