@@ -48,6 +48,24 @@ INITIAL_RETRY_DELAY_SECONDS = 2
 
 workstations_table = dynamodb.Table(WORKSTATIONS_TABLE)
 
+# --- Helper Functions ---
+
+def generate_temp_password():
+    """Generates a temporary password for new AD users."""
+    return f"Welcome{datetime.now().year}!"
+
+def parse_directory_name(directory_name):
+    """
+    Parses the directory name and returns DC parts with validation.
+    Returns (dc_parts, netbios_name, netbios_name_upper) or raises ValueError.
+    """
+    dc_parts = directory_name.split('.')
+    if len(dc_parts) < 2:
+        raise ValueError(f"Invalid directory name format: {directory_name}. Expected format: domain.tld (e.g., innovatech.local)")
+    netbios_name = dc_parts[0]
+    netbios_name_upper = netbios_name.upper()
+    return dc_parts, netbios_name, netbios_name_upper
+
 def handler(event, context):
     print(f"Received event: {json.dumps(event)}")
     for record in event['Records']:
@@ -374,7 +392,7 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
         raise e
     
     # 3. Password will be set by workstation User Data script after domain join
-    temp_password = f"Welcome{datetime.now().year}!"
+    temp_password = generate_temp_password()
     
     print(f"AD user created (password will be set by workstation after domain join)")
     conn_389.unbind()
@@ -384,11 +402,10 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
 def _create_ad_user_object(conn, username, name, email, dept, directory_name):
     """Creates the AD user object (without password)"""
     
-    dc_parts = directory_name.split('.')
-    netbios_name = dc_parts[0].upper()
+    dc_parts, _, netbios_name_upper = parse_directory_name(directory_name)
     
     # AWS Managed AD: Use the delegated OU
-    dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
+    dn = f"CN={username},OU={netbios_name_upper},DC={dc_parts[0]},DC={dc_parts[1]}"
     
     print(f"Creating AD Object: {dn}")
     
@@ -453,9 +470,8 @@ def delete_ad_user(username, directory_name, secret_arn):
         print(f"Connected to AD on port 389")
         
         # Build user DN
-        dc_parts = directory_name.split('.')
-        netbios_name = dc_parts[0].upper()
-        user_dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
+        dc_parts, _, netbios_name_upper = parse_directory_name(directory_name)
+        user_dn = f"CN={username},OU={netbios_name_upper},DC={dc_parts[0]},DC={dc_parts[1]}"
         
         print(f"Deleting AD user: {user_dn}")
         
@@ -496,12 +512,10 @@ def launch_workstation(name, emp_id, dept, email):
     
     # Extract username from email (consistent with AD user creation)
     username = email.split('@')[0]
-    temp_password = f"Welcome{datetime.now().year}!"
+    temp_password = generate_temp_password()
     
     # Generate NetBIOS name from DIRECTORY_NAME (e.g., 'innovatech.local' -> 'innovatech')
-    dc_parts = DIRECTORY_NAME.split('.')
-    netbios_name = dc_parts[0]
-    netbios_name_upper = netbios_name.upper()
+    dc_parts, netbios_name, netbios_name_upper = parse_directory_name(DIRECTORY_NAME)
     
     # User Data with PowerShell domain join
     user_data = f"""<powershell>
