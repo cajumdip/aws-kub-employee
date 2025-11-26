@@ -48,6 +48,24 @@ INITIAL_RETRY_DELAY_SECONDS = 2
 
 workstations_table = dynamodb.Table(WORKSTATIONS_TABLE)
 
+# --- Helper Functions ---
+
+def generate_temp_password():
+    """Generates a temporary password for new AD users."""
+    return f"Welcome{datetime.now().year}!"
+
+def parse_directory_name(directory_name):
+    """
+    Parses the directory name and returns DC parts with validation.
+    Returns (dc_parts, netbios_name, netbios_name_upper) or raises ValueError.
+    """
+    dc_parts = directory_name.split('.')
+    if len(dc_parts) < 2:
+        raise ValueError(f"Invalid directory name format: {directory_name}. Expected format: domain.tld (e.g., innovatech.local)")
+    netbios_name = dc_parts[0]
+    netbios_name_upper = netbios_name.upper()
+    return dc_parts, netbios_name, netbios_name_upper
+
 def handler(event, context):
     print(f"Received event: {json.dumps(event)}")
     for record in event['Records']:
@@ -69,7 +87,7 @@ def handle_onboarding(record):
     try:
         # 1. Launch Workstation FIRST
         print("🖥️ Launching workstation...")
-        instance_id, private_ip = launch_workstation(emp_name, emp_id, dept)
+        instance_id, private_ip = launch_workstation(emp_name, emp_id, dept, emp_email)
         
         if not instance_id:
             raise Exception("Failed to launch workstation")
@@ -373,51 +391,21 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
         print(f"Failed to create user object: {e}")
         raise e
     
-    # 3. Set password via LDAP modify (same connection, port 389)
-    temp_password = f"Welcome{datetime.now().year}!"
+    # 3. Password will be set by workstation User Data script after domain join
+    temp_password = generate_temp_password()
     
-    print(f"Setting password for AD user")
-    try:
-        # Set unicodePwd attribute (requires UTF-16-LE encoding with quotes)
-        password_value = f'"{temp_password}"'.encode('utf-16-le')
-        
-        conn_389.modify(user_dn, {
-            'unicodePwd': [(MODIFY_REPLACE, [password_value])]
-        })
-        
-        if conn_389.result['result'] == 0:
-            print(f"Password set successfully")
-        else:
-            print(f"Password set failed: {conn_389.result}")
-            raise Exception(f"Failed to set password: {conn_389.result['description']}")
-        
-        # Enable the account
-        conn_389.modify(user_dn, {
-            'userAccountControl': [(MODIFY_REPLACE, [USER_ACCOUNT_CONTROL_NORMAL])]
-        })
-        
-        if conn_389.result['result'] == 0:
-            print(f"Account enabled successfully")
-        else:
-            print(f"Account enable failed: {conn_389.result}")
-            raise Exception(f"Failed to enable account: {conn_389.result['description']}")
-            
-    except Exception as e:
-        print(f"Error setting password/enabling account: {e}")
-        raise e
-    finally:
-        conn_389.unbind()
-    
+    print(f"AD user created (password will be set by workstation after domain join)")
+    conn_389.unbind()
+
     return temp_password
 
 def _create_ad_user_object(conn, username, name, email, dept, directory_name):
     """Creates the AD user object (without password)"""
     
-    dc_parts = directory_name.split('.')
-    netbios_name = dc_parts[0].upper()
+    dc_parts, _, netbios_name_upper = parse_directory_name(directory_name)
     
     # AWS Managed AD: Use the delegated OU
-    dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
+    dn = f"CN={username},OU={netbios_name_upper},DC={dc_parts[0]},DC={dc_parts[1]}"
     
     print(f"Creating AD Object: {dn}")
     
@@ -482,9 +470,8 @@ def delete_ad_user(username, directory_name, secret_arn):
         print(f"Connected to AD on port 389")
         
         # Build user DN
-        dc_parts = directory_name.split('.')
-        netbios_name = dc_parts[0].upper()
-        user_dn = f"CN={username},OU={netbios_name},DC={dc_parts[0]},DC={dc_parts[1]}"
+        dc_parts, _, netbios_name_upper = parse_directory_name(directory_name)
+        user_dn = f"CN={username},OU={netbios_name_upper},DC={dc_parts[0]},DC={dc_parts[1]}"
         
         print(f"Deleting AD user: {user_dn}")
         
@@ -507,7 +494,7 @@ def delete_ad_user(username, directory_name, secret_arn):
 
 # --- Infrastructure Helpers ---
 
-def launch_workstation(name, emp_id, dept):
+def launch_workstation(name, emp_id, dept, email):
     # Get AD admin credentials
     secret_val = secretsmanager.get_secret_value(SecretId=AD_SECRET_ARN)['SecretString']
     secret = json.loads(secret_val)
@@ -522,6 +509,13 @@ def launch_workstation(name, emp_id, dept):
     dc_ips = get_directory_ips()
     dc_ip_1 = dc_ips[0] if len(dc_ips) > 0 else "10.0.10.78"
     dc_ip_2 = dc_ips[1] if len(dc_ips) > 1 else "10.0.11.216"
+    
+    # Extract username from email (consistent with AD user creation)
+    username = email.split('@')[0]
+    temp_password = generate_temp_password()
+    
+    # Generate NetBIOS name from DIRECTORY_NAME (e.g., 'innovatech.local' -> 'innovatech')
+    dc_parts, netbios_name, netbios_name_upper = parse_directory_name(DIRECTORY_NAME)
     
     # User Data with PowerShell domain join
     user_data = f"""<powershell>
@@ -539,7 +533,7 @@ Start-Sleep -Seconds 30
 Install-WindowsFeature RSAT-AD-PowerShell -ErrorAction SilentlyContinue
 
 # Join domain
-$adminUser = "innovatech\\{admin_user}"
+$adminUser = "{netbios_name}\\{admin_user}"
 $adminPass = ConvertTo-SecureString "{admin_pass}" -AsPlainText -Force
 $credential = New-Object System.Management.Automation.PSCredential($adminUser, $adminPass)
 
@@ -549,7 +543,7 @@ $success = $false
 
 while (-not $success -and $retryCount -lt $maxRetries) {{
     try {{
-        Add-Computer -DomainName "{DIRECTORY_NAME}" -Credential $credential -OUPath "OU=Computers,OU=innovatech,DC=innovatech,DC=local" -Force -ErrorAction Stop
+        Add-Computer -DomainName "{DIRECTORY_NAME}" -Credential $credential -OUPath "OU=Computers,OU={netbios_name_upper},DC={dc_parts[0]},DC={dc_parts[1]}" -Force -ErrorAction Stop
         Write-Host "Domain join successful"
         $success = $true
     }} catch {{
@@ -559,11 +553,11 @@ while (-not $success -and $retryCount -lt $maxRetries) {{
     }}
 }}
 
-# Reboot if domain join succeeded
+# If domain join succeeded, set user password and enable RDP
 if ($success) {{
-    Write-Host "Rebooting to complete domain join..."
+    Write-Host "Setting up user account and RDP..."
     
-    # Enable RDP before reboot
+    # Enable RDP
     Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0
     Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
     
@@ -572,13 +566,38 @@ if ($success) {{
         Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Domain Users" -ErrorAction SilentlyContinue
         Write-Host "Granted RDP access to Domain Users"
     }} catch {{
-        Write-Host "RDP permission setup: $_"
+        Write-Host "RDP permission already exists"
     }}
     
+    # Set user password (after domain join, we can use AD cmdlets)
+    # Note: Password is passed via User Data. For production, consider using AWS Secrets Manager
+    $username = "{username}"
+    $userPassword = ConvertTo-SecureString "{temp_password}" -AsPlainText -Force
+    
+    $passwordSet = $false
+    $retryCount = 0
+    while (-not $passwordSet -and $retryCount -lt 10) {{
+        try {{
+            Set-ADAccountPassword -Identity $username -NewPassword $userPassword -Reset -Server "{DIRECTORY_NAME}" -Credential $credential -ErrorAction Stop
+            Enable-ADAccount -Identity $username -Server "{DIRECTORY_NAME}" -Credential $credential -ErrorAction Stop
+            Write-Host "Password set and account enabled for $username"
+            $passwordSet = $true
+        }} catch {{
+            $retryCount++
+            Write-Host "Password set attempt $retryCount failed: $_ - Retrying..."
+            Start-Sleep -Seconds 15
+        }}
+    }}
+    
+    if (-not $passwordSet) {{
+        Write-Host "ERROR: Failed to set password for $username after 10 attempts. User account may be disabled."
+    }}
+    
+    Write-Host "Rebooting to complete setup..."
     Restart-Computer -Force
 }}
 </powershell>
-<persist>false</persist>
+<persist>true</persist>
 """
     
     try:
