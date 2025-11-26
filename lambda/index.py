@@ -570,6 +570,7 @@ if ($success) {{
     }}
     
     # Set user password (after domain join, we can use AD cmdlets)
+    # Note: Password is passed via User Data. For production, consider using AWS Secrets Manager
     $username = "{username}"
     $userPassword = ConvertTo-SecureString "{temp_password}" -AsPlainText -Force
     
@@ -586,6 +587,10 @@ if ($success) {{
             Write-Host "Password set attempt $retryCount failed: $_ - Retrying..."
             Start-Sleep -Seconds 15
         }}
+    }}
+    
+    if (-not $passwordSet) {{
+        Write-Host "ERROR: Failed to set password for $username after 10 attempts. User account may be disabled."
     }}
     
     Write-Host "Rebooting to complete setup..."
