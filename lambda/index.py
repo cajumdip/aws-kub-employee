@@ -69,7 +69,7 @@ def handle_onboarding(record):
     try:
         # 1. Launch Workstation FIRST
         print("🖥️ Launching workstation...")
-        instance_id, private_ip = launch_workstation(emp_name, emp_id, dept)
+        instance_id, private_ip = launch_workstation(emp_name, emp_id, dept, emp_email)
         
         if not instance_id:
             raise Exception("Failed to launch workstation")
@@ -478,7 +478,7 @@ def delete_ad_user(username, directory_name, secret_arn):
 
 # --- Infrastructure Helpers ---
 
-def launch_workstation(name, emp_id, dept):
+def launch_workstation(name, emp_id, dept, email):
     # Get AD admin credentials
     secret_val = secretsmanager.get_secret_value(SecretId=AD_SECRET_ARN)['SecretString']
     secret = json.loads(secret_val)
@@ -494,9 +494,14 @@ def launch_workstation(name, emp_id, dept):
     dc_ip_1 = dc_ips[0] if len(dc_ips) > 0 else "10.0.10.78"
     dc_ip_2 = dc_ips[1] if len(dc_ips) > 1 else "10.0.11.216"
     
-    # Extract username from employee name for password setting
-    username = name.lower().replace(' ', '.')
+    # Extract username from email (consistent with AD user creation)
+    username = email.split('@')[0]
     temp_password = f"Welcome{datetime.now().year}!"
+    
+    # Generate NetBIOS name from DIRECTORY_NAME (e.g., 'innovatech.local' -> 'innovatech')
+    dc_parts = DIRECTORY_NAME.split('.')
+    netbios_name = dc_parts[0]
+    netbios_name_upper = netbios_name.upper()
     
     # User Data with PowerShell domain join
     user_data = f"""<powershell>
@@ -514,7 +519,7 @@ Start-Sleep -Seconds 30
 Install-WindowsFeature RSAT-AD-PowerShell -ErrorAction SilentlyContinue
 
 # Join domain
-$adminUser = "{DIRECTORY_NAME}\\{admin_user}"
+$adminUser = "{netbios_name}\\{admin_user}"
 $adminPass = ConvertTo-SecureString "{admin_pass}" -AsPlainText -Force
 $credential = New-Object System.Management.Automation.PSCredential($adminUser, $adminPass)
 
@@ -524,7 +529,7 @@ $success = $false
 
 while (-not $success -and $retryCount -lt $maxRetries) {{
     try {{
-        Add-Computer -DomainName "{DIRECTORY_NAME}" -Credential $credential -OUPath "OU=Computers,OU=INNOVATECH,DC=innovatech,DC=local" -Force -ErrorAction Stop
+        Add-Computer -DomainName "{DIRECTORY_NAME}" -Credential $credential -OUPath "OU=Computers,OU={netbios_name_upper},DC={dc_parts[0]},DC={dc_parts[1]}" -Force -ErrorAction Stop
         Write-Host "Domain join successful"
         $success = $true
     }} catch {{
