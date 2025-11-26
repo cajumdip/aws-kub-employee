@@ -8,11 +8,15 @@ from datetime import datetime
 
 # Try to import ldap3 for AD operations
 try:
-    from ldap3 import Server, Connection, ALL
+    from ldap3 import Server, Connection, ALL, MODIFY_REPLACE
     LDAP_AVAILABLE = True
 except ImportError:
     LDAP_AVAILABLE = False
+    MODIFY_REPLACE = 3  # Fallback value if ldap3 not available
     print("⚠️ ldap3 library not found. AD User creation will be skipped.")
+
+# Active Directory userAccountControl values
+USER_ACCOUNT_CONTROL_NORMAL = '512'  # Normal account, enabled
 
 # Initialize AWS clients
 iam = boto3.client('iam')
@@ -330,7 +334,7 @@ def handle_offboarding(record):
 def create_ad_user(name, username, email, dept, directory_name, secret_arn):
     """
     Creates a user in AWS Managed AD.
-    Uses port 389 for user creation, SSM for password setting.
+    Uses port 389 for user creation and password setting.
     """
     
     # 1. Retrieve Credentials
@@ -364,16 +368,45 @@ def create_ad_user(name, username, email, dept, directory_name, secret_arn):
         
         # Create the user (without password)
         user_dn = _create_ad_user_object(conn_389, username, name, email, dept, directory_name)
-        conn_389.unbind()
         
     except Exception as e:
         print(f"Failed to create user object: {e}")
         raise e
     
-    # 3. Set password via SSM Run Command (more reliable than LDAPS from Lambda)
+    # 3. Set password via LDAP modify (same connection, port 389)
     temp_password = f"Welcome{datetime.now().year}!"
     
-    
+    print(f"Setting password for AD user")
+    try:
+        # Set unicodePwd attribute (requires UTF-16-LE encoding with quotes)
+        password_value = f'"{temp_password}"'.encode('utf-16-le')
+        
+        conn_389.modify(user_dn, {
+            'unicodePwd': [(MODIFY_REPLACE, [password_value])]
+        })
+        
+        if conn_389.result['result'] == 0:
+            print(f"Password set successfully")
+        else:
+            print(f"Password set failed: {conn_389.result}")
+            raise Exception(f"Failed to set password: {conn_389.result['description']}")
+        
+        # Enable the account
+        conn_389.modify(user_dn, {
+            'userAccountControl': [(MODIFY_REPLACE, [USER_ACCOUNT_CONTROL_NORMAL])]
+        })
+        
+        if conn_389.result['result'] == 0:
+            print(f"Account enabled successfully")
+        else:
+            print(f"Account enable failed: {conn_389.result}")
+            raise Exception(f"Failed to enable account: {conn_389.result['description']}")
+            
+    except Exception as e:
+        print(f"Error setting password/enabling account: {e}")
+        raise e
+    finally:
+        conn_389.unbind()
     
     return temp_password
 
@@ -481,10 +514,6 @@ def launch_workstation(name, emp_id, dept):
     admin_user = secret['username']
     admin_pass = secret['password']
     
-    # Extract username from email
-    username = name.lower().replace(' ', '.')
-    temp_password = f"Welcome{datetime.now().year}!"
-    
     # Generate unique computer name (max 15 chars for Windows)
     timestamp_suffix = str(int(time.time()))[-4:]  # Last 4 digits of timestamp
     computer_name = f"WS-{emp_id.replace('-', '')[:7]}{timestamp_suffix}"[:15]
@@ -531,44 +560,25 @@ while (-not $success -and $retryCount -lt $maxRetries) {{
 }}
 
 # Reboot if domain join succeeded
-# Reboot if domain join succeeded
 if ($success) {{
     Write-Host "Rebooting to complete domain join..."
+    
+    # Enable RDP before reboot
+    Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0
+    Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+    
+    # Grant RDP access to Domain Users
+    try {{
+        Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Domain Users" -ErrorAction SilentlyContinue
+        Write-Host "Granted RDP access to Domain Users"
+    }} catch {{
+        Write-Host "RDP permission setup: $_"
+    }}
+    
     Restart-Computer -Force
 }}
-
-# Wait for reboot and complete post-domain-join tasks
-Start-Sleep -Seconds 180
-
-# Grant RDP permissions to domain users
-try {{
-    Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Domain Users" -ErrorAction Stop
-    Write-Host "Granted RDP access to Domain Users"
-}} catch {{
-    Write-Host "RDP permission may already exist: $_"
-}}
-
-Import-Module ActiveDirectory -ErrorAction SilentlyContinue
-
-# Set user password with retries
-$retryCount = 0
-$success = $false
-
-while (-not $success -and $retryCount -lt 10) {{
-    try {{
-        $password = ConvertTo-SecureString "{temp_password}" -AsPlainText -Force
-        Set-ADAccountPassword -Identity "{username}" -NewPassword $password -Reset -Server "{DIRECTORY_NAME}" -Credential $credential -ErrorAction Stop
-        Enable-ADAccount -Identity "{username}" -Server "{DIRECTORY_NAME}" -Credential $credential -ErrorAction Stop
-        Write-Host "Password set successfully for {username}"
-        $success = $true
-    }} catch {{
-        $retryCount++
-        Write-Host "Password set attempt $retryCount failed: $_"
-        Start-Sleep -Seconds 30
-    }}
-}}
 </powershell>
-<persist>true</persist>
+<persist>false</persist>
 """
     
     try:
