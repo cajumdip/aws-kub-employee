@@ -163,7 +163,7 @@ output "cloudwatch_log_groups" {
   description = "List of CloudWatch log group names"
   value = [
     aws_cloudwatch_log_group.eks_cluster.name,
-    aws_cloudwatch_log_group.lambda_onboarding.name
+    "/aws/lambda/${aws_lambda_function.onboarding.function_name}"
   ]
 }
 

@@ -61,7 +61,7 @@ resource "aws_cognito_user_pool" "hr_portal" {
 
   # Email configuration - disabled, credentials sent via Slack
   email_configuration {
-    email_sending_account = "DEVELOPER"
+    email_sending_account = "COGNITO_DEFAULT"
   }
 
   tags = {
