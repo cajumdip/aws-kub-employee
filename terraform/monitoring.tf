@@ -17,18 +17,8 @@ resource "aws_sns_topic_subscription" "monitoring_email" {
 }
 
 # ===== CloudWatch Log Groups =====
-
-# Lambda Log Group
 # Note: Lambda automatically creates its log group on first invocation.
-# This resource ensures the log group exists with the correct retention policy.
-resource "aws_cloudwatch_log_group" "lambda_onboarding" {
-  name              = "/aws/lambda/${var.project_name}-onboarding-automation"
-  retention_in_days = var.log_retention_days
-
-  tags = {
-    Name = "${var.project_name}-lambda-logs"
-  }
-}
+# The log group is not managed by Terraform to avoid conflicts.
 
 # ===== CloudWatch Metric Alarms =====
 
