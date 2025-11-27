@@ -751,6 +751,33 @@ resource "aws_iam_role_policy" "backend_cognito" {
   })
 }
 
+# IAM Policy for Backend SSM Operations (Workstation App Deployment)
+resource "aws_iam_role_policy" "backend_ssm" {
+  name = "${var.project_name}-backend-ssm-policy"
+  role = aws_iam_role.backend_app.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:SendCommand",
+          "ssm:GetCommandInvocation"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 # ===== IAM Role for AWS Load Balancer Controller =====
 data "aws_iam_policy_document" "lbc_assume_role" {
   statement {
