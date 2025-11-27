@@ -47,6 +47,10 @@ DEPARTMENT_APPS = {
     'Operations': ['PuTTY', 'WinSCP', 'Notepad++', '7-Zip']
 }
 
+# SSM deployment constants
+SSM_COMMAND_TIMEOUT_SECONDS = 1800  # 30 minutes max for app installation
+SSM_OUTPUT_MAX_LENGTH = 1000  # Maximum characters to return from command output
+
 # Cognito Configuration
 COGNITO_REGION = os.environ.get('COGNITO_REGION', os.environ.get('AWS_REGION', 'eu-central-1'))
 COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID', '')
@@ -592,7 +596,7 @@ def deploy_apps(instance_id):
             common_response = ssm.send_command(
                 InstanceIds=[instance_id],
                 DocumentName=COMMON_APPS_DOCUMENT,
-                TimeoutSeconds=1800,  # 30 minutes max
+                TimeoutSeconds=SSM_COMMAND_TIMEOUT_SECONDS,
                 Comment=f'Installing common apps for {employee.get("name")}'
             )
             command_ids.append({
@@ -613,7 +617,7 @@ def deploy_apps(instance_id):
             dept_response = ssm.send_command(
                 InstanceIds=[instance_id],
                 DocumentName=dept_document,
-                TimeoutSeconds=1800,  # 30 minutes max
+                TimeoutSeconds=SSM_COMMAND_TIMEOUT_SECONDS,
                 Comment=f'Installing {department} apps for {employee.get("name")}'
             )
             command_ids.append({
@@ -685,9 +689,9 @@ def get_deployment_status(instance_id, command_id):
         
         # Include output if command completed
         if status in ['Success', 'Failed', 'TimedOut', 'Cancelled']:
-            result['output'] = response.get('StandardOutputContent', '')[:1000]  # Limit output size
+            result['output'] = response.get('StandardOutputContent', '')[:SSM_OUTPUT_MAX_LENGTH]
             if response.get('StandardErrorContent'):
-                result['error_output'] = response.get('StandardErrorContent', '')[:1000]
+                result['error_output'] = response.get('StandardErrorContent', '')[:SSM_OUTPUT_MAX_LENGTH]
         
         return jsonify(result), 200
         

@@ -1465,6 +1465,13 @@
         let deploymentCommands = [];
         let deploymentPollInterval = null;
 
+        // HTML escape function to prevent XSS
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         async function loadWorkstations() {
             try {
                 const response = await apiCall(`${API_URL}/workstations`);
@@ -1514,21 +1521,29 @@
                 const employeeName = ws.employee_name || 'Unknown';
                 const department = ws.department || 'Unknown';
                 
+                // Escape all user-provided data to prevent XSS
+                const safeEmployeeName = escapeHtml(employeeName);
+                const safeEmployeeEmail = escapeHtml(ws.employee_email || '');
+                const safeDepartment = escapeHtml(department);
+                const safeInstanceId = escapeHtml(ws.instance_id);
+                const safePrivateIp = escapeHtml(privateIp);
+                const safeState = escapeHtml(state);
+                
                 html += `
                     <tr style="border-bottom: 1px solid #ddd;">
                         <td style="padding: 10px;">
-                            <strong>${employeeName}</strong>
-                            <div style="font-size: 10px; color: #666;">${ws.employee_email || ''}</div>
+                            <strong>${safeEmployeeName}</strong>
+                            <div style="font-size: 10px; color: #666;">${safeEmployeeEmail}</div>
                         </td>
-                        <td style="padding: 10px;">${department}</td>
-                        <td style="padding: 10px; font-family: monospace; font-size: 10px;">${ws.instance_id}</td>
+                        <td style="padding: 10px;">${safeDepartment}</td>
+                        <td style="padding: 10px; font-family: monospace; font-size: 10px;">${safeInstanceId}</td>
                         <td style="padding: 10px;">
-                            <span style="color: ${stateColor}; font-weight: bold; text-transform: uppercase;">${state}</span>
+                            <span style="color: ${stateColor}; font-weight: bold; text-transform: uppercase;">${safeState}</span>
                         </td>
-                        <td style="padding: 10px; font-family: monospace;">${privateIp}</td>
+                        <td style="padding: 10px; font-family: monospace;">${safePrivateIp}</td>
                         <td style="padding: 10px; text-align: center;">
                             ${canDeploy ? `
-                                <button class="button button-small" onclick="showDeployAppsModal('${ws.instance_id}', '${employeeName.replace(/'/g, "\\'")}', '${department}')" style="background: #339933; border-color: #227722;">
+                                <button class="button button-small" data-instance="${safeInstanceId}" data-employee="${safeEmployeeName}" data-department="${safeDepartment}" onclick="showDeployAppsModal(this.dataset.instance, this.dataset.employee, this.dataset.department)" style="background: #339933; border-color: #227722;">
                                     Deploy Apps
                                 </button>
                             ` : `
@@ -1620,6 +1635,11 @@
         }
 
         function startDeploymentPolling(instanceId) {
+            // Don't start polling if no commands to track
+            if (deploymentCommands.length === 0) {
+                return;
+            }
+            
             // Poll every 10 seconds
             deploymentPollInterval = setInterval(async () => {
                 await checkDeploymentStatus(instanceId);
@@ -1630,6 +1650,15 @@
         }
 
         async function checkDeploymentStatus(instanceId) {
+            // Don't check if no commands to track
+            if (deploymentCommands.length === 0) {
+                if (deploymentPollInterval) {
+                    clearInterval(deploymentPollInterval);
+                    deploymentPollInterval = null;
+                }
+                return;
+            }
+            
             let allComplete = true;
             let outputText = '';
 
