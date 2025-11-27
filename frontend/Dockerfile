@@ -6,7 +6,6 @@ RUN mkdir -p /var/cache/nginx/client_temp \
     /var/cache/nginx/fastcgi_temp \
     /var/cache/nginx/uwsgi_temp \
     /var/cache/nginx/scgi_temp \
-    /var/cache/nginx/config \
     /var/run \
     /tmp \
     && chown -R nginx:nginx /var/cache/nginx \
@@ -19,12 +18,15 @@ RUN mkdir -p /var/cache/nginx/client_temp \
 # Copy HTML file
 COPY index.html /usr/share/nginx/html/
 
-# Copy nginx config template
-COPY nginx.conf /etc/nginx/nginx.conf.template
+# Copy nginx config
+COPY nginx.conf /etc/nginx/nginx.conf
 
-# Ensure nginx owns the HTML directory
-RUN chown -R nginx:nginx /usr/share/nginx/html \
-    && chown nginx:nginx /etc/nginx/nginx.conf.template
+# Copy entrypoint script
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+
+# Set permissions and ensure nginx owns the HTML directory
+RUN chmod +x /docker-entrypoint.sh \
+    && chown -R nginx:nginx /usr/share/nginx/html
 
 # Set default environment variables for Cognito
 ENV COGNITO_USER_POOL_ID="" \
@@ -36,6 +38,5 @@ EXPOSE 8080
 # Run as nginx user
 USER nginx
 
-# Use envsubst to replace environment variables in nginx config, then start nginx
-# Using /var/cache/nginx/config which is owned by nginx for security
-CMD ["/bin/sh", "-c", "envsubst '$COGNITO_USER_POOL_ID $COGNITO_CLIENT_ID $COGNITO_REGION' < /etc/nginx/nginx.conf.template > /var/cache/nginx/config/nginx.conf && nginx -c /var/cache/nginx/config/nginx.conf -g 'daemon off;'"]
+# Use entrypoint script to generate config.js from environment variables
+ENTRYPOINT ["/docker-entrypoint.sh"]
