@@ -12,13 +12,13 @@ echo "Updating system packages..."
 apt-get update
 apt-get upgrade -y
 
-# Install WireGuard
-echo "Installing WireGuard..."
+# Install WireGuard and iptables-persistent
+echo "Installing WireGuard and iptables-persistent..."
 apt-get install -y wireguard qrencode curl
+DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
 
-# Enable IP forwarding (idempotent)
+# Enable IP forwarding
 echo "Enabling IP forwarding..."
-# FIX: Removed space in 'net.ipv4. ip_forward'
 grep -q "net.ipv4.ip_forward=1" /etc/sysctl.conf || echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 grep -q "net.ipv6.conf.all.forwarding=1" /etc/sysctl.conf || echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
 sysctl -p
@@ -26,30 +26,23 @@ sysctl -p
 # Detect primary network interface dynamically
 PRIMARY_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 echo "Detected primary network interface: $PRIMARY_INTERFACE"
-# Enable IP forwarding
-sysctl -w net.ipv4.ip_forward=1
-echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
 
-# Add iptables NAT rule for VPN clients
+# Add NAT rule for VPN clients to access VPC
+echo "Configuring NAT for VPN client traffic..."
 iptables -t nat -A POSTROUTING -s 10.200.200.0/24 -o $PRIMARY_INTERFACE -j MASQUERADE
 
-# Make iptables persistent
-apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
+# Save iptables rules
 netfilter-persistent save
 
-# Verify forwarding is enabled
-sysctl net.ipv4. ip_forward
-
-# Test ping to workstation
-ping -c 3 10.0.20.82
+# Verify IP forwarding
+echo "IP forwarding status:"
+sysctl net.ipv4.ip_forward
 
 # Generate server keys
 echo "Generating WireGuard server keys..."
 cd /etc/wireguard
 umask 077
-# FIX: Removed space in 'server_private. key'
-wg genkey | tee server_private.key | wg pubkey > server_public.key
+wg genkey | tee server_privatekey | wg pubkey > server_public.key
 
 SERVER_PRIVATE_KEY=$(cat server_private.key)
 SERVER_PUBLIC_KEY=$(cat server_public.key)
@@ -78,7 +71,7 @@ for i in {1..${vpn_client_count}}; do
   CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
   CLIENT_IP=$((i+1))
   
-  echo "  Creating client $i config..."
+  echo "Creating client $i config..."
   
   # Add client to server config
   cat >> /etc/wireguard/wg0.conf <<PEER
