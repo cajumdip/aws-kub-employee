@@ -23,13 +23,16 @@ mainSteps:
       runCommand:
         - |
           # Install Chocolatey if not already installed
+          # Note: Each SSM document is self-contained for independent execution
           if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
               Set-ExecutionPolicy Bypass -Scope Process -Force
+              # Enable TLS 1.2 (0x0C00 = 3072) for secure HTTPS connections
               [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+              # Official Chocolatey installation script from https://chocolatey.org/install
               Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           }
           
-          # Refresh environment variables
+          # Refresh environment variables to include Chocolatey path
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           
           # Install common applications
@@ -66,13 +69,16 @@ mainSteps:
       runCommand:
         - |
           # Install Chocolatey if not already installed
+          # Note: Each SSM document is self-contained for independent execution
           if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
               Set-ExecutionPolicy Bypass -Scope Process -Force
+              # Enable TLS 1.2 (0x0C00 = 3072) for secure HTTPS connections
               [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+              # Official Chocolatey installation script from https://chocolatey.org/install
               Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           }
           
-          # Refresh environment variables
+          # Refresh environment variables to include Chocolatey path
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           
           # Install Engineering applications
@@ -112,13 +118,16 @@ mainSteps:
       runCommand:
         - |
           # Install Chocolatey if not already installed
+          # Note: Each SSM document is self-contained for independent execution
           if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
               Set-ExecutionPolicy Bypass -Scope Process -Force
+              # Enable TLS 1.2 (0x0C00 = 3072) for secure HTTPS connections
               [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+              # Official Chocolatey installation script from https://chocolatey.org/install
               Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           }
           
-          # Refresh environment variables
+          # Refresh environment variables to include Chocolatey path
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           
           # Install Marketing applications
@@ -156,13 +165,16 @@ mainSteps:
       runCommand:
         - |
           # Install Chocolatey if not already installed
+          # Note: Each SSM document is self-contained for independent execution
           if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
               Set-ExecutionPolicy Bypass -Scope Process -Force
+              # Enable TLS 1.2 (0x0C00 = 3072) for secure HTTPS connections
               [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+              # Official Chocolatey installation script from https://chocolatey.org/install
               Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           }
           
-          # Refresh environment variables
+          # Refresh environment variables to include Chocolatey path
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           
           # Install Sales applications
@@ -200,13 +212,16 @@ mainSteps:
       runCommand:
         - |
           # Install Chocolatey if not already installed
+          # Note: Each SSM document is self-contained for independent execution
           if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
               Set-ExecutionPolicy Bypass -Scope Process -Force
+              # Enable TLS 1.2 (0x0C00 = 3072) for secure HTTPS connections
               [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+              # Official Chocolatey installation script from https://chocolatey.org/install
               Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           }
           
-          # Refresh environment variables
+          # Refresh environment variables to include Chocolatey path
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           
           # Install HR applications
@@ -244,13 +259,16 @@ mainSteps:
       runCommand:
         - |
           # Install Chocolatey if not already installed
+          # Note: Each SSM document is self-contained for independent execution
           if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
               Set-ExecutionPolicy Bypass -Scope Process -Force
+              # Enable TLS 1.2 (0x0C00 = 3072) for secure HTTPS connections
               [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+              # Official Chocolatey installation script from https://chocolatey.org/install
               Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           }
           
-          # Refresh environment variables
+          # Refresh environment variables to include Chocolatey path
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           
           # Install Finance applications
@@ -289,13 +307,16 @@ mainSteps:
       runCommand:
         - |
           # Install Chocolatey if not already installed
+          # Note: Each SSM document is self-contained for independent execution
           if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
               Set-ExecutionPolicy Bypass -Scope Process -Force
+              # Enable TLS 1.2 (0x0C00 = 3072) for secure HTTPS connections
               [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+              # Official Chocolatey installation script from https://chocolatey.org/install
               Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           }
           
-          # Refresh environment variables
+          # Refresh environment variables to include Chocolatey path
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           
           # Install Operations applications
