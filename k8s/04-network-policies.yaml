@@ -33,11 +33,10 @@ spec:
     ports:
     - protocol: TCP
       port: 8080
-  # Allow traffic from ALB/Ingress controller
+  # Allow traffic from ALB (External Source)
   - from:
-    - namespaceSelector:
-        matchLabels:
-          name: kube-system
+    - ipBlock:              # <--- FIXED: Allow external IPs (ALB)
+        cidr: 0.0.0.0/0
     ports:
     - protocol: TCP
       port: 8080
@@ -50,9 +49,10 @@ spec:
     ports:
     - protocol: UDP
       port: 53
-  # Allow HTTPS to AWS APIs (DynamoDB, etc.)
+  # Allow HTTPS to AWS APIs (DynamoDB, Cognito, etc.)
   - to:
-    - podSelector: {}
+    - ipBlock:              # <--- FIXED: Allow access to AWS/Internet
+        cidr: 0.0.0.0/0
     ports:
     - protocol: TCP
       port: 443
@@ -78,14 +78,13 @@ spec:
   - Ingress
   - Egress
   ingress:
-  # Allow traffic from ALB/Ingress controller
+  # Allow traffic from ALB (External Source)
   - from:
-    - namespaceSelector:
-        matchLabels:
-          name: kube-system
+    - ipBlock:              # <--- FIXED: Allow external IPs (ALB)
+        cidr: 0.0.0.0/0
     ports:
     - protocol: TCP
-      port: 80
+      port: 8080            # <--- FIXED: Port changed from 80 to 8080
   egress:
   # Allow DNS
   - to:
