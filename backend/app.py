@@ -19,9 +19,33 @@ CORS(app)
 # Initialize AWS clients
 dynamodb = boto3.resource('dynamodb', region_name=os.environ.get('AWS_REGION', 'eu-central-1'))
 ec2 = boto3.client('ec2', region_name=os.environ.get('AWS_REGION', 'eu-central-1'))
+ssm = boto3.client('ssm', region_name=os.environ.get('AWS_REGION', 'eu-central-1'))
 
 employees_table = dynamodb.Table(os.environ.get('DYNAMODB_TABLE_NAME', 'innovatech-employees'))
 workstations_table = dynamodb.Table(os.environ.get('WORKSTATIONS_TABLE', 'innovatech-workstations'))
+
+# Department to SSM Document mapping for application deployment
+DEPARTMENT_SSM_DOCUMENTS = {
+    'Engineering': 'innovatech-install-engineering-apps',
+    'Marketing': 'innovatech-install-marketing-apps',
+    'Sales': 'innovatech-install-sales-apps',
+    'HR': 'innovatech-install-hr-apps',
+    'Finance': 'innovatech-install-finance-apps',
+    'Operations': 'innovatech-install-operations-apps'
+}
+
+COMMON_APPS_DOCUMENT = 'innovatech-install-common-apps'
+
+# Application lists for UI display
+DEPARTMENT_APPS = {
+    'Common': ['Slack', 'Google Chrome', 'Mozilla Thunderbird'],
+    'Engineering': ['VS Code', 'Git', 'Python 3', 'Node.js', 'Docker Desktop', 'Postman'],
+    'Marketing': ['GIMP', 'Inkscape', 'OBS Studio', 'VLC Media Player'],
+    'Sales': ['Microsoft Edge', 'Zoom', 'PDF Reader', 'LibreOffice'],
+    'HR': ['LibreOffice', 'Zoom', 'PDF Reader', '7-Zip'],
+    'Finance': ['LibreOffice Calc', 'PDF Reader', '7-Zip', 'KeePass'],
+    'Operations': ['PuTTY', 'WinSCP', 'Notepad++', '7-Zip']
+}
 
 # Cognito Configuration
 COGNITO_REGION = os.environ.get('COGNITO_REGION', os.environ.get('AWS_REGION', 'eu-central-1'))
@@ -441,11 +465,16 @@ def delete_employee(employee_id):
 @app.route('/api/workstations', methods=['GET'])
 @require_auth()
 def get_workstations():
-    """Get all workstations with real-time EC2 status"""
+    """Get all workstations with real-time EC2 status and employee details"""
     try:
         # Get all workstations from DynamoDB
         response = workstations_table.scan()
         workstations = response.get('Items', [])
+        
+        # Get all employees to map employee details
+        employees_response = employees_table.scan()
+        employees = employees_response.get('Items', [])
+        employee_map = {e['employee_id']: e for e in employees}
         
         # Get real-time EC2 statuses
         instance_ids = [ws['instance_id'] for ws in workstations if 'instance_id' in ws]
@@ -464,11 +493,20 @@ def get_workstations():
                             'private_ip': instance.get('PrivateIpAddress', 'N/A')
                         }
                 
-                # Merge EC2 status with workstation data
+                # Merge EC2 status and employee data with workstation data
                 for ws in workstations:
                     instance_id = ws.get('instance_id')
                     if instance_id in ec2_status_map:
                         ws['ec2_status'] = ec2_status_map[instance_id]
+                    
+                    # Add employee details
+                    employee_id = ws.get('employee_id')
+                    if employee_id in employee_map:
+                        emp = employee_map[employee_id]
+                        ws['employee_name'] = emp.get('name', 'Unknown')
+                        ws['employee_email'] = emp.get('email', '')
+                        ws['department'] = emp.get('department', 'Unknown')
+                        ws['role'] = emp.get('role', '')
                         
             except Exception as ec2_error:
                 app.logger.warning(f"Error getting EC2 statuses: {str(ec2_error)}")
@@ -485,6 +523,196 @@ def get_workstations():
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/api/workstations/<instance_id>/deploy-apps', methods=['POST'])
+@require_auth()
+def deploy_apps(instance_id):
+    """Deploy department-specific applications to a workstation"""
+    try:
+        # Find the workstation in DynamoDB by instance_id
+        workstations_response = workstations_table.scan(
+            FilterExpression='instance_id = :iid',
+            ExpressionAttributeValues={':iid': instance_id}
+        )
+        workstations = workstations_response.get('Items', [])
+        
+        if not workstations:
+            return jsonify({
+                'success': False,
+                'error': 'Workstation not found'
+            }), 404
+        
+        workstation = workstations[0]
+        employee_id = workstation.get('employee_id')
+        
+        # Get employee to determine department
+        emp_response = employees_table.get_item(Key={'employee_id': employee_id})
+        if 'Item' not in emp_response:
+            return jsonify({
+                'success': False,
+                'error': 'Employee not found for this workstation'
+            }), 404
+        
+        employee = emp_response['Item']
+        department = employee.get('department')
+        
+        if department not in DEPARTMENT_SSM_DOCUMENTS:
+            return jsonify({
+                'success': False,
+                'error': f'Unknown department: {department}'
+            }), 400
+        
+        # Check EC2 instance state
+        try:
+            ec2_response = ec2.describe_instances(InstanceIds=[instance_id])
+            if not ec2_response['Reservations']:
+                return jsonify({
+                    'success': False,
+                    'error': 'Instance not found in EC2'
+                }), 404
+            
+            instance_state = ec2_response['Reservations'][0]['Instances'][0]['State']['Name']
+            if instance_state != 'running':
+                return jsonify({
+                    'success': False,
+                    'error': f'Instance is not running (current state: {instance_state})'
+                }), 400
+        except Exception as ec2_error:
+            app.logger.error(f"Error checking EC2 instance: {str(ec2_error)}")
+            return jsonify({
+                'success': False,
+                'error': f'Error checking instance state: {str(ec2_error)}'
+            }), 500
+        
+        # Send SSM commands - first common apps, then department-specific
+        command_ids = []
+        
+        # Install common apps
+        try:
+            common_response = ssm.send_command(
+                InstanceIds=[instance_id],
+                DocumentName=COMMON_APPS_DOCUMENT,
+                TimeoutSeconds=1800,  # 30 minutes max
+                Comment=f'Installing common apps for {employee.get("name")}'
+            )
+            command_ids.append({
+                'command_id': common_response['Command']['CommandId'],
+                'document': COMMON_APPS_DOCUMENT,
+                'type': 'common'
+            })
+        except Exception as ssm_error:
+            app.logger.error(f"Error sending common apps SSM command: {str(ssm_error)}")
+            return jsonify({
+                'success': False,
+                'error': f'Failed to send common apps command: {str(ssm_error)}'
+            }), 500
+        
+        # Install department-specific apps
+        dept_document = DEPARTMENT_SSM_DOCUMENTS[department]
+        try:
+            dept_response = ssm.send_command(
+                InstanceIds=[instance_id],
+                DocumentName=dept_document,
+                TimeoutSeconds=1800,  # 30 minutes max
+                Comment=f'Installing {department} apps for {employee.get("name")}'
+            )
+            command_ids.append({
+                'command_id': dept_response['Command']['CommandId'],
+                'document': dept_document,
+                'type': 'department'
+            })
+        except Exception as ssm_error:
+            app.logger.error(f"Error sending department apps SSM command: {str(ssm_error)}")
+            return jsonify({
+                'success': False,
+                'error': f'Failed to send department apps command: {str(ssm_error)}'
+            }), 500
+        
+        app.logger.info(f"Deployed apps to {instance_id} for {employee.get('name')} ({department})")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Application deployment initiated for {employee.get("name")}',
+            'commands': command_ids,
+            'department': department,
+            'apps': {
+                'common': DEPARTMENT_APPS.get('Common', []),
+                'department': DEPARTMENT_APPS.get(department, [])
+            }
+        }), 200
+        
+    except Exception as e:
+        app.logger.error(f"Error deploying apps: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/workstations/<instance_id>/deployment-status/<command_id>', methods=['GET'])
+@require_auth()
+def get_deployment_status(instance_id, command_id):
+    """Get the status of an SSM command deployment"""
+    try:
+        response = ssm.get_command_invocation(
+            CommandId=command_id,
+            InstanceId=instance_id
+        )
+        
+        status = response.get('Status', 'Unknown')
+        status_details = response.get('StatusDetails', '')
+        
+        # Map SSM statuses to simpler statuses for UI
+        status_map = {
+            'Pending': 'Pending',
+            'InProgress': 'InProgress',
+            'Delayed': 'InProgress',
+            'Success': 'Success',
+            'Cancelled': 'Failed',
+            'TimedOut': 'Failed',
+            'Failed': 'Failed',
+            'Cancelling': 'InProgress'
+        }
+        
+        simplified_status = status_map.get(status, status)
+        
+        result = {
+            'success': True,
+            'status': simplified_status,
+            'status_details': status_details,
+            'command_id': command_id,
+            'instance_id': instance_id
+        }
+        
+        # Include output if command completed
+        if status in ['Success', 'Failed', 'TimedOut', 'Cancelled']:
+            result['output'] = response.get('StandardOutputContent', '')[:1000]  # Limit output size
+            if response.get('StandardErrorContent'):
+                result['error_output'] = response.get('StandardErrorContent', '')[:1000]
+        
+        return jsonify(result), 200
+        
+    except ssm.exceptions.InvocationDoesNotExist:
+        return jsonify({
+            'success': False,
+            'error': 'Command invocation not found',
+            'status': 'Pending'
+        }), 404
+    except Exception as e:
+        app.logger.error(f"Error getting deployment status: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/workstations/apps-info', methods=['GET'])
+@require_auth()
+def get_apps_info():
+    """Get information about available apps for each department"""
+    return jsonify({
+        'success': True,
+        'apps': DEPARTMENT_APPS,
+        'departments': list(DEPARTMENT_SSM_DOCUMENTS.keys())
+    }), 200
 
 @app.route('/api/stats', methods=['GET'])
 @require_auth()

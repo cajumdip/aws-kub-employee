@@ -619,6 +619,7 @@
             <div class="nav-bar">
                 <div class="tabs" style="border: none; margin: 0; justify-content: center; background: transparent;">
                     <div class="tab active" onclick="switchTab('employees')" id="tabEmployees" style="background: #fff; border: none;">Employee Management</div>
+                    <div class="tab" onclick="switchTab('workstations')" id="tabWorkstations" style="background: #5a9dd1; border: none; color: #fff;">Workstations</div>
                     <div class="tab" onclick="switchTab('hr-users')" id="tabHrUsers" style="background: #5a9dd1; border: none; color: #fff;">HR User Management</div>
                 </div>
             </div>
@@ -698,6 +699,19 @@
                 </div>
             </div>
 
+            <!-- Workstations Tab -->
+            <div id="workstationsTab" class="tab-content">
+                <div class="content-box">
+                    <h2>Workstation Management</h2>
+                    <p style="color: #666; margin-bottom: 15px;">
+                        Deploy department-specific applications to employee workstations. Each deployment installs common apps plus department-specific software.
+                    </p>
+                    <div id="workstationList">
+                        <div class="loading">Loading workstations...</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- HR User Management Tab -->
             <div id="hrUsersTab" class="tab-content">
                 <div class="content-box">
@@ -769,6 +783,59 @@
             <div class="modal-footer">
                 <button class="button" onclick="closeDeleteHrUserModal()">Cancel</button>
                 <button class="button button-delete" id="confirmDeleteHrUserBtn">Delete HR User</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Deploy Apps Modal -->
+    <div id="deployAppsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header modal-header-blue">Deploy Applications</div>
+            <div class="modal-body">
+                <p><strong id="deployAppsMessage">Deploy applications to workstation?</strong></p>
+                <div id="deployAppsDetails" style="margin-top: 15px;">
+                    <p><strong>Employee:</strong> <span id="deployEmployeeName"></span></p>
+                    <p><strong>Department:</strong> <span id="deployDepartment"></span></p>
+                    <p><strong>Instance:</strong> <span id="deployInstanceId"></span></p>
+                </div>
+                <div style="margin-top: 15px;">
+                    <p><strong>Common Applications:</strong></p>
+                    <ul id="commonAppsList" style="margin: 5px 0 10px 20px;"></ul>
+                    <p><strong>Department Applications:</strong></p>
+                    <ul id="deptAppsList" style="margin: 5px 0 10px 20px;"></ul>
+                </div>
+                <p style="margin-top: 12px; color: #2b5278; font-size: 10px;">
+                    ⏱️ Deployment typically takes 10-15 minutes. Progress will be tracked automatically.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button class="button" onclick="closeDeployAppsModal()">Cancel</button>
+                <button class="button" id="confirmDeployBtn" style="background: #339933; border-color: #227722;">Deploy Apps</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Deployment Progress Modal -->
+    <div id="deployProgressModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header modal-header-blue">Deployment Progress</div>
+            <div class="modal-body">
+                <p><strong id="progressEmployeeName"></strong></p>
+                <div id="progressDetails" style="margin-top: 15px;">
+                    <div id="commonAppsProgress" style="margin-bottom: 10px;">
+                        <p><strong>Common Apps:</strong> <span id="commonAppsStatus" class="badge">Pending</span></p>
+                    </div>
+                    <div id="deptAppsProgress">
+                        <p><strong>Department Apps:</strong> <span id="deptAppsStatus" class="badge">Pending</span></p>
+                    </div>
+                </div>
+                <div id="progressOutput" style="margin-top: 15px; display: none;">
+                    <p><strong>Output:</strong></p>
+                    <pre id="progressOutputText" style="background: #f5f5f5; padding: 10px; font-size: 10px; max-height: 150px; overflow-y: auto;"></pre>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="button" onclick="closeDeployProgressModal()">Close</button>
             </div>
         </div>
     </div>
@@ -1093,7 +1160,13 @@
                 document.getElementById('tabEmployees').classList.add('active');
                 document.getElementById('tabEmployees').style.background = '#fff';
                 document.getElementById('tabEmployees').style.color = '#2b5278';
-            } else {
+            } else if (tab === 'workstations') {
+                document.getElementById('workstationsTab').classList.add('active');
+                document.getElementById('tabWorkstations').classList.add('active');
+                document.getElementById('tabWorkstations').style.background = '#fff';
+                document.getElementById('tabWorkstations').style.color = '#2b5278';
+                loadWorkstations();
+            } else if (tab === 'hr-users') {
                 document.getElementById('hrUsersTab').classList.add('active');
                 document.getElementById('tabHrUsers').classList.add('active');
                 document.getElementById('tabHrUsers').style.background = '#fff';
@@ -1229,17 +1302,6 @@
                 }
             }
         });
-
-        window.onclick = function(event) {
-            const modal = document.getElementById('deleteModal');
-            const hrModal = document.getElementById('deleteHrUserModal');
-            if (event.target == modal) {
-                closeDeleteModal();
-            }
-            if (event.target == hrModal) {
-                closeDeleteHrUserModal();
-            }
-        }
 
         document.getElementById('employeeForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -1386,6 +1448,264 @@
                 }
             }
         });
+
+        // ===== Workstation Management =====
+        // Application lists for UI display
+        const DEPARTMENT_APPS = {
+            'Common': ['Slack', 'Google Chrome', 'Mozilla Thunderbird'],
+            'Engineering': ['VS Code', 'Git', 'Python 3', 'Node.js', 'Docker Desktop', 'Postman'],
+            'Marketing': ['GIMP', 'Inkscape', 'OBS Studio', 'VLC Media Player'],
+            'Sales': ['Microsoft Edge', 'Zoom', 'PDF Reader', 'LibreOffice'],
+            'HR': ['LibreOffice', 'Zoom', 'PDF Reader', '7-Zip'],
+            'Finance': ['LibreOffice Calc', 'PDF Reader', '7-Zip', 'KeePass'],
+            'Operations': ['PuTTY', 'WinSCP', 'Notepad++', '7-Zip']
+        };
+
+        let currentDeployWorkstation = null;
+        let deploymentCommands = [];
+        let deploymentPollInterval = null;
+
+        async function loadWorkstations() {
+            try {
+                const response = await apiCall(`${API_URL}/workstations`);
+                const data = await response.json();
+
+                if (data.success) {
+                    displayWorkstations(data.workstations);
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                if (error.message !== 'Session expired' && error.message !== 'Access denied') {
+                    document.getElementById('workstationList').innerHTML = 
+                        `<p style="color: #cc3333;">Error loading workstations: ${error.message}</p>`;
+                }
+            }
+        }
+
+        function displayWorkstations(workstations) {
+            const container = document.getElementById('workstationList');
+            
+            if (workstations.length === 0) {
+                container.innerHTML = '<p style="color: #666;">No workstations found. Workstations are created automatically when employees are added.</p>';
+                return;
+            }
+
+            let html = `
+                <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+                    <thead>
+                        <tr style="background: #e8f4f8; border-bottom: 2px solid #7db9e8;">
+                            <th style="padding: 10px; text-align: left; color: #2b5278;">Employee</th>
+                            <th style="padding: 10px; text-align: left; color: #2b5278;">Department</th>
+                            <th style="padding: 10px; text-align: left; color: #2b5278;">Instance ID</th>
+                            <th style="padding: 10px; text-align: left; color: #2b5278;">State</th>
+                            <th style="padding: 10px; text-align: left; color: #2b5278;">Private IP</th>
+                            <th style="padding: 10px; text-align: center; color: #2b5278;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            workstations.forEach(ws => {
+                const state = ws.ec2_status ? ws.ec2_status.state : 'unknown';
+                const privateIp = ws.ec2_status ? ws.ec2_status.private_ip : 'N/A';
+                const stateColor = state === 'running' ? '#339933' : (state === 'stopped' ? '#cc3333' : '#999');
+                const canDeploy = state === 'running';
+                const employeeName = ws.employee_name || 'Unknown';
+                const department = ws.department || 'Unknown';
+                
+                html += `
+                    <tr style="border-bottom: 1px solid #ddd;">
+                        <td style="padding: 10px;">
+                            <strong>${employeeName}</strong>
+                            <div style="font-size: 10px; color: #666;">${ws.employee_email || ''}</div>
+                        </td>
+                        <td style="padding: 10px;">${department}</td>
+                        <td style="padding: 10px; font-family: monospace; font-size: 10px;">${ws.instance_id}</td>
+                        <td style="padding: 10px;">
+                            <span style="color: ${stateColor}; font-weight: bold; text-transform: uppercase;">${state}</span>
+                        </td>
+                        <td style="padding: 10px; font-family: monospace;">${privateIp}</td>
+                        <td style="padding: 10px; text-align: center;">
+                            ${canDeploy ? `
+                                <button class="button button-small" onclick="showDeployAppsModal('${ws.instance_id}', '${employeeName.replace(/'/g, "\\'")}', '${department}')" style="background: #339933; border-color: #227722;">
+                                    Deploy Apps
+                                </button>
+                            ` : `
+                                <span style="color: #999; font-size: 10px;">Instance not running</span>
+                            `}
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        function showDeployAppsModal(instanceId, employeeName, department) {
+            currentDeployWorkstation = { instanceId, employeeName, department };
+            
+            document.getElementById('deployEmployeeName').textContent = employeeName;
+            document.getElementById('deployDepartment').textContent = department;
+            document.getElementById('deployInstanceId').textContent = instanceId;
+            
+            // Populate app lists
+            const commonApps = DEPARTMENT_APPS['Common'] || [];
+            const deptApps = DEPARTMENT_APPS[department] || [];
+            
+            document.getElementById('commonAppsList').innerHTML = commonApps.map(app => `<li>${app}</li>`).join('');
+            document.getElementById('deptAppsList').innerHTML = deptApps.map(app => `<li>${app}</li>`).join('');
+            
+            document.getElementById('deployAppsModal').style.display = 'block';
+        }
+
+        function closeDeployAppsModal() {
+            document.getElementById('deployAppsModal').style.display = 'none';
+            currentDeployWorkstation = null;
+        }
+
+        document.getElementById('confirmDeployBtn').addEventListener('click', async () => {
+            if (!currentDeployWorkstation) return;
+
+            const { instanceId, employeeName, department } = currentDeployWorkstation;
+            const btn = document.getElementById('confirmDeployBtn');
+            btn.disabled = true;
+            btn.textContent = 'Deploying...';
+
+            try {
+                const response = await apiCall(`${API_URL}/workstations/${instanceId}/deploy-apps`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    closeDeployAppsModal();
+                    deploymentCommands = data.commands;
+                    showDeployProgressModal(employeeName, department, instanceId);
+                    startDeploymentPolling(instanceId);
+                    showAlert('Application deployment started!', 'success');
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                if (error.message !== 'Session expired' && error.message !== 'Access denied') {
+                    showAlert(`Error: ${error.message}`, 'error');
+                }
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Deploy Apps';
+            }
+        });
+
+        function showDeployProgressModal(employeeName, department, instanceId) {
+            document.getElementById('progressEmployeeName').textContent = `${employeeName} (${department}) - ${instanceId}`;
+            document.getElementById('commonAppsStatus').textContent = 'Pending';
+            document.getElementById('commonAppsStatus').style.background = '#999';
+            document.getElementById('deptAppsStatus').textContent = 'Pending';
+            document.getElementById('deptAppsStatus').style.background = '#999';
+            document.getElementById('progressOutput').style.display = 'none';
+            document.getElementById('progressOutputText').textContent = '';
+            document.getElementById('deployProgressModal').style.display = 'block';
+        }
+
+        function closeDeployProgressModal() {
+            document.getElementById('deployProgressModal').style.display = 'none';
+            if (deploymentPollInterval) {
+                clearInterval(deploymentPollInterval);
+                deploymentPollInterval = null;
+            }
+            deploymentCommands = [];
+        }
+
+        function startDeploymentPolling(instanceId) {
+            // Poll every 10 seconds
+            deploymentPollInterval = setInterval(async () => {
+                await checkDeploymentStatus(instanceId);
+            }, 10000);
+            
+            // Also check immediately
+            checkDeploymentStatus(instanceId);
+        }
+
+        async function checkDeploymentStatus(instanceId) {
+            let allComplete = true;
+            let outputText = '';
+
+            for (const cmd of deploymentCommands) {
+                try {
+                    const response = await apiCall(`${API_URL}/workstations/${instanceId}/deployment-status/${cmd.command_id}`);
+                    const data = await response.json();
+                    
+                    const statusElement = cmd.type === 'common' ? 
+                        document.getElementById('commonAppsStatus') : 
+                        document.getElementById('deptAppsStatus');
+                    
+                    statusElement.textContent = data.status || 'Unknown';
+                    
+                    // Update status color
+                    if (data.status === 'Success') {
+                        statusElement.style.background = '#339933';
+                    } else if (data.status === 'Failed') {
+                        statusElement.style.background = '#cc3333';
+                    } else if (data.status === 'InProgress') {
+                        statusElement.style.background = '#f0ad4e';
+                        allComplete = false;
+                    } else {
+                        statusElement.style.background = '#999';
+                        allComplete = false;
+                    }
+                    
+                    // Collect output
+                    if (data.output) {
+                        outputText += `=== ${cmd.type.toUpperCase()} APPS ===\n${data.output}\n\n`;
+                    }
+                    if (data.error_output) {
+                        outputText += `=== ${cmd.type.toUpperCase()} ERRORS ===\n${data.error_output}\n\n`;
+                    }
+                } catch (error) {
+                    console.error(`Error checking status for ${cmd.command_id}:`, error);
+                    allComplete = false;
+                }
+            }
+            
+            // Show output if we have any
+            if (outputText) {
+                document.getElementById('progressOutput').style.display = 'block';
+                document.getElementById('progressOutputText').textContent = outputText;
+            }
+            
+            // Stop polling if all commands are complete
+            if (allComplete && deploymentCommands.length > 0) {
+                if (deploymentPollInterval) {
+                    clearInterval(deploymentPollInterval);
+                    deploymentPollInterval = null;
+                }
+                showAlert('Application deployment completed!', 'success');
+            }
+        }
+
+        // Handle modal clicks outside
+        window.onclick = function(event) {
+            const deleteModal = document.getElementById('deleteModal');
+            const hrModal = document.getElementById('deleteHrUserModal');
+            const deployModal = document.getElementById('deployAppsModal');
+            const progressModal = document.getElementById('deployProgressModal');
+            
+            if (event.target == deleteModal) {
+                closeDeleteModal();
+            }
+            if (event.target == hrModal) {
+                closeDeleteHrUserModal();
+            }
+            if (event.target == deployModal) {
+                closeDeployAppsModal();
+            }
+            if (event.target == progressModal) {
+                closeDeployProgressModal();
+            }
+        }
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', () => {
