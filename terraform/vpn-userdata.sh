@@ -26,6 +26,23 @@ sysctl -p
 # Detect primary network interface dynamically
 PRIMARY_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
 echo "Detected primary network interface: $PRIMARY_INTERFACE"
+# Enable IP forwarding
+sysctl -w net.ipv4.ip_forward=1
+echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+
+# Add iptables NAT rule for VPN clients
+iptables -t nat -A POSTROUTING -s 10.200.200.0/24 -o $PRIMARY_INTERFACE -j MASQUERADE
+
+# Make iptables persistent
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
+netfilter-persistent save
+
+# Verify forwarding is enabled
+sysctl net.ipv4. ip_forward
+
+# Test ping to workstation
+ping -c 3 10.0.20.82
 
 # Generate server keys
 echo "Generating WireGuard server keys..."
