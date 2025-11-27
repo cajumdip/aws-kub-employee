@@ -950,7 +950,7 @@
             
             // Validate password requirements with clearer individual checks
             const hasMinLength = newPassword.length >= 8;
-            const hasLowercase = /[a-z]/.test(newPassword);
+            const hasLowercase = /[a-z]/. test(newPassword);
             const hasUppercase = /[A-Z]/.test(newPassword);
             const hasNumber = /\d/.test(newPassword);
             const hasSymbol = /[!@#$%^&*()_+\-=\[\]{}|;':",.<>\/?]/.test(newPassword);
@@ -967,18 +967,62 @@
             try {
                 cognitoUser.completeNewPasswordChallenge(newPassword, window.cognitoUserAttributes || {}, {
                     onSuccess: function(result) {
+                        // Store the token and user info
                         authToken = result.getIdToken().getJwtToken();
                         currentUser = {
-                            email: result.getIdToken().payload.email || cognitoUser.getUsername()
+                            email: result.getIdToken().payload. email || cognitoUser.getUsername()
                         };
                         
-                        showMainPortal();
-                        showAlert('Password changed successfully!', 'success');
-                        changePasswordBtn.disabled = false;
-                        changePasswordBtn.textContent = 'Change Password';
+                        // Check group membership (may not be in token immediately after password change)
+                        const groups = result.getIdToken().payload['cognito:groups'] || [];
+                        
+                        // If groups aren't in the token yet, we need to get a fresh session
+                        if (groups.length === 0) {
+                            // Get a fresh session with groups included
+                            cognitoUser.getSession(function(err, session) {
+                                if (err) {
+                                    newPasswordError. textContent = 'Failed to verify permissions. Please try logging in again.';
+                                    newPasswordError.style.display = 'block';
+                                    changePasswordBtn.disabled = false;
+                                    changePasswordBtn.textContent = 'Change Password';
+                                    return;
+                                }
+                                
+                                const freshGroups = session.getIdToken(). payload['cognito:groups'] || [];
+                                if (! freshGroups.includes('HR-Admins')) {
+                                    newPasswordError.textContent = 'Access denied. You are not a member of the HR-Admins group. ';
+                                    newPasswordError.style.display = 'block';
+                                    cognitoUser.signOut();
+                                    changePasswordBtn.disabled = false;
+                                    changePasswordBtn.textContent = 'Change Password';
+                                    return;
+                                }
+                                
+                                authToken = session.getIdToken(). getJwtToken();
+                                showMainPortal();
+                                showAlert('Password changed successfully!', 'success');
+                                changePasswordBtn.disabled = false;
+                                changePasswordBtn.textContent = 'Change Password';
+                            });
+                        } else {
+                            // Groups are already in the token
+                            if (! groups.includes('HR-Admins')) {
+                                newPasswordError.textContent = 'Access denied. You are not a member of the HR-Admins group. ';
+                                newPasswordError. style.display = 'block';
+                                cognitoUser. signOut();
+                                changePasswordBtn.disabled = false;
+                                changePasswordBtn.textContent = 'Change Password';
+                                return;
+                            }
+                            
+                            showMainPortal();
+                            showAlert('Password changed successfully!', 'success');
+                            changePasswordBtn.disabled = false;
+                            changePasswordBtn.textContent = 'Change Password';
+                        }
                     },
                     onFailure: function(err) {
-                        newPasswordError.textContent = err.message || 'Failed to change password';
+                        newPasswordError. textContent = err.message || 'Failed to change password';
                         newPasswordError.style.display = 'block';
                         changePasswordBtn.disabled = false;
                         changePasswordBtn.textContent = 'Change Password';
