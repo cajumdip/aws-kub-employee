@@ -21,6 +21,11 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
 echo "Enabling IP forwarding..."
 grep -q "net.ipv4.ip_forward=1" /etc/sysctl.conf || echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 grep -q "net.ipv6.conf.all.forwarding=1" /etc/sysctl.conf || echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
+
+# FIX: Explicitly setting the values immediately to ensure they are active (required when sysctl -p fails)
+sysctl -w net.ipv4.ip_forward=1
+sysctl -w net.ipv6.conf.all.forwarding=1
+# Load all config from file
 sysctl -p
 
 # Detect primary network interface dynamically
@@ -42,7 +47,7 @@ sysctl net.ipv4.ip_forward
 echo "Generating WireGuard server keys..."
 cd /etc/wireguard
 umask 077
-wg genkey | tee server_privatekey | wg pubkey > server_public.key
+wg genkey | tee server_private.key | wg pubkey > server_public.key
 
 SERVER_PRIVATE_KEY=$(cat server_private.key)
 SERVER_PUBLIC_KEY=$(cat server_public.key)
@@ -67,22 +72,22 @@ echo "Generating client configurations..."
 mkdir -p /etc/wireguard/clients
 
 for i in {1..${vpn_client_count}}; do
-  CLIENT_PRIVATE_KEY=$(wg genkey)
-  CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
-  CLIENT_IP=$((i+1))
-  
-  echo "Creating client $i config..."
-  
-  # Add client to server config
-  cat >> /etc/wireguard/wg0.conf <<PEER
+    CLIENT_PRIVATE_KEY=$(wg genkey)
+    CLIENT_PUBLIC_KEY=$(echo "$CLIENT_PRIVATE_KEY" | wg pubkey)
+    CLIENT_IP=$((i+1))
+    
+    echo "Creating client $i config..."
+    
+    # Add client to server config
+    cat >> /etc/wireguard/wg0.conf <<PEER
 
 [Peer]
 PublicKey = $CLIENT_PUBLIC_KEY
 AllowedIPs = 10.200.200.$CLIENT_IP/32
 PEER
-  
-  # Create client config
-  cat > /etc/wireguard/clients/client$i.conf <<CLIENT
+    
+    # Create client config
+    cat > /etc/wireguard/clients/client$i.conf <<CLIENT
 [Interface]
 PrivateKey = $CLIENT_PRIVATE_KEY
 Address = 10.200.200.$CLIENT_IP/24
@@ -94,9 +99,9 @@ Endpoint = ENDPOINT_PLACEHOLDER:51820
 AllowedIPs = 10.0.0.0/16, 10.200.200.0/24
 PersistentKeepalive = 25
 CLIENT
-  
-  # Generate QR code for mobile clients
-  qrencode -t ansiutf8 < /etc/wireguard/clients/client$i.conf > /etc/wireguard/clients/client$i-qr.txt
+    
+    # Generate QR code for mobile clients
+    qrencode -t ansiutf8 < /etc/wireguard/clients/client$i.conf > /etc/wireguard/clients/client$i-qr.txt
 done
 
 # Enable and start WireGuard
@@ -109,11 +114,11 @@ VPN_PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
 echo "VPN Public IP: $VPN_PUBLIC_IP"
 
 for i in {1..${vpn_client_count}}; do
-  sed -i "s|ENDPOINT_PLACEHOLDER|$VPN_PUBLIC_IP|g" /etc/wireguard/clients/client$i.conf
+    sed -i "s|ENDPOINT_PLACEHOLDER|$VPN_PUBLIC_IP|g" /etc/wireguard/clients/client$i.conf
 done
 
 # Display summary
-echo "=== WireGuard VPN Setup Complete!  ==="
+echo "=== WireGuard VPN Setup Complete! ==="
 echo "Server Public Key: $SERVER_PUBLIC_KEY"
 echo "VPN Public IP: $VPN_PUBLIC_IP"
 echo "Primary Interface: $PRIMARY_INTERFACE"
