@@ -66,6 +66,61 @@ def parse_directory_name(directory_name):
     netbios_name_upper = netbios_name.upper()
     return dc_parts, netbios_name, netbios_name_upper
 
+def get_next_vpn_config():
+    """Retrieve next available VPN client config from VPN server"""
+    try:
+        # Get VPN server instance ID from tag
+        vpn_instances = ec2.describe_instances(
+            Filters=[
+                {'Name': 'tag:Name', 'Values': ['*vpn*']},
+                {'Name': 'instance-state-name', 'Values': ['running']}
+            ]
+        )
+        
+        if not vpn_instances['Reservations']:
+            print("No running VPN server found")
+            return None
+        
+        vpn_instance_id = vpn_instances['Reservations'][0]['Instances'][0]['InstanceId']
+        
+        # Use SSM to read client config files
+        ssm = boto3.client('ssm')
+        
+        # Try client configs 1-5
+        for i in range(1, 6):
+            try:
+                result = ssm.send_command(
+                    InstanceIds=[vpn_instance_id],
+                    DocumentName='AWS-RunShellScript',
+                    Parameters={
+                        'commands': [f'cat /etc/wireguard/clients/client{i}.conf']
+                    }
+                )
+                
+                command_id = result['Command']['CommandId']
+                
+                # Wait for command to complete
+                import time
+                time.sleep(3)
+                
+                output = ssm.get_command_invocation(
+                    CommandId=command_id,
+                    InstanceId=vpn_instance_id
+                )
+                
+                if output['Status'] == 'Success':
+                    return output['StandardOutputContent']
+                    
+            except Exception as e:
+                print(f"Error getting client{i} config: {e}")
+                continue
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error retrieving VPN config: {e}")
+        return None
+
 def handler(event, context):
     print(f"Received event: {json.dumps(event)}")
     for record in event['Records']:
@@ -121,7 +176,7 @@ def handle_onboarding(record):
         else:
             print("⚠️ Skipping AD creation (Missing Layer or Secret)")
         
-        # 4. Create IAM User (Backup/Console Access)
+        # 4.  Create IAM User (Backup/Console Access)
         iam_username = emp_email.replace('@', '-').replace('.', '-')
         create_iam_user_safe(iam_username, emp_id, dept)
 
@@ -135,17 +190,28 @@ def handle_onboarding(record):
             'created_at': datetime.utcnow().isoformat()
         })
 
-        # 6. Slack Notification
+        # 6. Slack Notification with VPN Config
         if SLACK_WEBHOOK:
             msg = f"*Name:* {emp_name}\n*AD User:* `{ad_username}`\n*Workstation:* `{instance_id}`"
             if ad_password:
                 msg += f"\n*Initial Password:* ||{ad_password}||"
+            
+            # Get VPN config for this employee
+            try:
+                vpn_config = get_next_vpn_config()
+                if vpn_config:
+                    msg += f"\n\n*WireGuard VPN Config:*\n```\n{vpn_config}\n```"
+                    msg += f"\n_Import this config into WireGuard to access your workstation at `{private_ip}`_"
+            except Exception as e:
+                print(f"Warning: Could not retrieve VPN config: {e}")
+            
             send_slack("🎉 Enterprise Onboarding Complete", msg)
 
     except Exception as e:
         print(f"❌ Error: {str(e)}")
         raise e
-
+    
+    
 def handle_offboarding(record):
     old_image = record['dynamodb']['OldImage']
     emp_id = old_image['employee_id']['S']
