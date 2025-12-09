@@ -270,7 +270,6 @@ resource "aws_instance" "vpn" {
   vpc_security_group_ids      = [aws_security_group.vpn[0].id]
   associate_public_ip_address = true
   source_dest_check           = false
-  iam_instance_profile        = aws_iam_instance_profile.vpn_profile[0].name
 
   user_data = templatefile("${path.module}/vpn-userdata.sh", {
     vpn_client_count = var.vpn_client_count
@@ -311,43 +310,6 @@ resource "aws_eip_association" "vpn" {
   allocation_id = aws_eip.vpn[0].id
 }
 
-# ===== IAM Role for VPN Server =====
-resource "aws_iam_role" "vpn_role" {
-  count = var.enable_vpn ? 1 : 0
-  name  = "${var.project_name}-vpn-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-    }]
-  })
-
-  tags = {
-    Name = "${var.project_name}-vpn-role"
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "vpn_ssm" {
-  count      = var.enable_vpn ? 1 : 0
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-  role       = aws_iam_role.vpn_role[0].name
-}
-
-resource "aws_iam_instance_profile" "vpn_profile" {
-  count = var.enable_vpn ? 1 : 0
-  name  = "${var.project_name}-vpn-profile"
-  role  = aws_iam_role.vpn_role[0].name
-
-  tags = {
-    Name = "${var.project_name}-vpn-profile"
-  }
-}
-
 # Update workstation security group to allow RDP from VPN clients
 resource "aws_security_group_rule" "workstation_rdp_from_vpn" {
   count             = var.enable_vpn ? 1 : 0
@@ -372,6 +334,38 @@ resource "aws_route_table" "public" {
   tags = {
     Name = "${var.project_name}-public-rt"
   }
+}
+
+# In terraform/main.tf
+
+# Get all private route tables that need VPN access
+locals {
+  # FIX: Reference the Route Tables directly, not the subnets.
+  # Subnet resources do not export 'route_table_id'.
+  vpn_route_table_ids = var.enable_vpn ? flatten([
+  ]) : []
+}
+
+resource "aws_route" "private_to_vpn" {
+  count                  = var.enable_vpn ? 1 : 0
+  route_table_id         = aws_route_table.private.id
+  destination_cidr_block = "10.200.200.0/24"                 # VPN Client Network CIDR
+  # Use the Primary Network Interface ID for stable routing to the EC2 VPN Instance
+  network_interface_id   = aws_instance.vpn[0].primary_network_interface_id 
+
+  depends_on = [aws_instance.vpn]
+}
+
+# Add route for VPN client traffic to all private subnet route tables
+resource "aws_route" "vpn_client_access" {
+  # Convert the list to a set for for_each
+  for_each = toset(local.vpn_route_table_ids)
+   
+  route_table_id         = each.value
+  destination_cidr_block = "10.200.200.0/24"  # VPN client subnet
+  network_interface_id   = aws_instance.vpn[0].primary_network_interface_id
+
+  depends_on = [aws_instance.vpn]
 }
 
 resource "aws_route_table" "private" {
@@ -784,33 +778,6 @@ resource "aws_iam_role_policy" "backend_cognito" {
           "cognito-idp:AdminDeleteUser"
         ]
         Resource = aws_cognito_user_pool.hr_portal.arn
-      }
-    ]
-  })
-}
-
-# IAM Policy for Backend SSM Operations (Workstation App Deployment)
-resource "aws_iam_role_policy" "backend_ssm" {
-  name = "${var.project_name}-backend-ssm-policy"
-  role = aws_iam_role.backend_app.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:SendCommand",
-          "ssm:GetCommandInvocation"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ec2:DescribeInstances"
-        ]
-        Resource = "*"
       }
     ]
   })
