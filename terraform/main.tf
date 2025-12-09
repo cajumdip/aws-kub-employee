@@ -270,6 +270,7 @@ resource "aws_instance" "vpn" {
   vpc_security_group_ids      = [aws_security_group.vpn[0].id]
   associate_public_ip_address = true
   source_dest_check           = false
+  iam_instance_profile        = aws_iam_instance_profile.vpn_profile[0].name
 
   user_data = templatefile("${path.module}/vpn-userdata.sh", {
     vpn_client_count = var.vpn_client_count
@@ -308,6 +309,43 @@ resource "aws_eip_association" "vpn" {
   count         = var.enable_vpn ? 1 : 0
   instance_id   = aws_instance.vpn[0].id
   allocation_id = aws_eip.vpn[0].id
+}
+
+# ===== IAM Role for VPN Server =====
+resource "aws_iam_role" "vpn_role" {
+  count = var.enable_vpn ? 1 : 0
+  name  = "${var.project_name}-vpn-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = {
+    Name = "${var.project_name}-vpn-role"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "vpn_ssm" {
+  count      = var.enable_vpn ? 1 : 0
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  role       = aws_iam_role.vpn_role[0].name
+}
+
+resource "aws_iam_instance_profile" "vpn_profile" {
+  count = var.enable_vpn ? 1 : 0
+  name  = "${var.project_name}-vpn-profile"
+  role  = aws_iam_role.vpn_role[0].name
+
+  tags = {
+    Name = "${var.project_name}-vpn-profile"
+  }
 }
 
 # Update workstation security group to allow RDP from VPN clients
