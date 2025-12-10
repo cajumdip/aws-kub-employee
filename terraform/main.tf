@@ -364,6 +364,18 @@ resource "aws_security_group_rule" "workstation_rdp_from_vpn" {
   description       = "RDP from VPN clients"
 }
 
+# Allow ICMP (ping) from VPN clients for troubleshooting
+resource "aws_security_group_rule" "workstation_icmp_from_vpn" {
+  count             = var.enable_vpn ? 1 : 0
+  type              = "ingress"
+  from_port         = -1
+  to_port           = -1
+  protocol          = "icmp"
+  cidr_blocks       = ["10.200.200.0/24"] # VPN client network
+  security_group_id = aws_security_group.workstations.id
+  description       = "ICMP from VPN clients for troubleshooting"
+}
+
 # ===== Route Tables =====
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
@@ -378,34 +390,13 @@ resource "aws_route_table" "public" {
   }
 }
 
-# In terraform/main.tf
-
-# Get all private route tables that need VPN access
-locals {
-  # FIX: Reference the Route Tables directly, not the subnets.
-  # Subnet resources do not export 'route_table_id'.
-  vpn_route_table_ids = var.enable_vpn ? flatten([
-  ]) : []
-}
-
+# Add VPN route to the private route table (used by Lambda, EKS, and workstations)
 resource "aws_route" "private_to_vpn" {
   count                  = var.enable_vpn ? 1 : 0
   route_table_id         = aws_route_table.private.id
   destination_cidr_block = "10.200.200.0/24" # VPN Client Network CIDR
   # Use the Primary Network Interface ID for stable routing to the EC2 VPN Instance
   network_interface_id = aws_instance.vpn[0].primary_network_interface_id
-
-  depends_on = [aws_instance.vpn]
-}
-
-# Add route for VPN client traffic to all private subnet route tables
-resource "aws_route" "vpn_client_access" {
-  # Convert the list to a set for for_each
-  for_each = toset(local.vpn_route_table_ids)
-
-  route_table_id         = each.value
-  destination_cidr_block = "10.200.200.0/24" # VPN client subnet
-  network_interface_id   = aws_instance.vpn[0].primary_network_interface_id
 
   depends_on = [aws_instance.vpn]
 }
